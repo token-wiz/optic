@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Monochrome version - works in all color modes -->
+  <!-- Light mode (dark strokes) -->
+  <defs>
+    <style>
+      @media (prefers-color-scheme: dark) {
+        .mono-stroke { stroke: #a7f3d0; }
+        .mono-fill { fill: #a7f3d0; }
+      }
+      @media (prefers-color-scheme: light) {
+        .mono-stroke { stroke: #0a0e27; }
+        .mono-fill { fill: #0a0e27; }
+      }
+    </style>
+  </defs>
+  
+  <!-- Outer hexagonal frame -->
+  <polygon points="128,24 204,64 204,192 128,232 52,192 52,64" 
+           fill="none" class="mono-stroke" stroke-width="2" opacity="0.4"/>
+  
+  <!-- Primary aperture - 6 segments -->
+  <g id="aperture">
+    <path d="M 128 50 L 165 85 L 165 110 L 128 80 Z" class="mono-fill" opacity="0.25"/>
+    <path d="M 165 85 L 195 110 L 195 145 L 165 110 Z" class="mono-fill" opacity="0.4"/>
+    <path d="M 165 145 L 195 170 L 165 195 L 128 170 Z" class="mono-fill" opacity="0.25"/>
+    <path d="M 128 180 L 91 195 L 91 170 L 128 195 Z" class="mono-fill" opacity="0.4"/>
+    <path d="M 91 145 L 61 170 L 61 135 L 91 110 Z" class="mono-fill" opacity="0.25"/>
+    <path d="M 91 85 L 61 110 L 91 135 L 128 110 Z" class="mono-fill" opacity="0.4"/>
+  </g>
+  
+  <!-- Central concentric circles - represents precise observation -->
+  <circle cx="128" cy="128" r="28" fill="none" class="mono-stroke" stroke-width="2.5"/>
+  <circle cx="128" cy="128" r="18" fill="none" class="mono-stroke" stroke-width="1.5" opacity="0.7"/>
+  <circle cx="128" cy="128" r="8" class="mono-fill"/>
+  
+  <!-- Convergence lines - data flowing inward -->
+  <line x1="128" y1="40" x2="128" y2="60" class="mono-stroke" stroke-width="1.5" opacity="0.6"/>
+  <line x1="128" y1="196" x2="128" y2="216" class="mono-stroke" stroke-width="1.5" opacity="0.6"/>
+  <line x1="40" y1="128" x2="60" y2="128" class="mono-stroke" stroke-width="1.5" opacity="0.6"/>
+  <line x1="196" y1="128" x2="216" y2="128" class="mono-stroke" stroke-width="1.5" opacity="0.6"/>
+  
+  <!-- Diagonal lines - suggesting dimensionality -->
+  <line x1="68" y1="68" x2="85" y2="85" class="mono-stroke" stroke-width="1.5" opacity="0.5"/>
+  <line x1="188" y1="68" x2="171" y2="85" class="mono-stroke" stroke-width="1.5" opacity="0.5"/>
+  <line x1="68" y1="188" x2="85" y2="171" class="mono-stroke" stroke-width="1.5" opacity="0.5"/>
+  <line x1="188" y1="188" x2="171" y2="171" class="mono-stroke" stroke-width="1.5" opacity="0.5"/>
+  
+  <!-- Precision indicator -->
+  <rect x="120" y="120" width="16" height="16" fill="none" class="mono-stroke" stroke-width="1" opacity="0.4"/>
+</svg>

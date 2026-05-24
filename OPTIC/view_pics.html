@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Reference Images</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0e27;
+            color: #f0f4f9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            padding: 20px;
+        }
+        h1 {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+        }
+        .image-container {
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+        }
+        img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        @media (max-width: 768px) {
+            .gallery {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Dashboard Reference Images</h1>
+    <div class="gallery">
+        <div class="image-container"><img src="../pics/IMG_8197.jpg" alt="Dashboard Design 1"></div>
+        <div class="image-container"><img src="../pics/IMG_8199.jpg" alt="Dashboard Design 2"></div>
+        <div class="image-container"><img src="../pics/IMG_8200.jpg" alt="Dashboard Design 3"></div>
+        <div class="image-container"><img src="../pics/IMG_8201.jpg" alt="Dashboard Design 4"></div>
+        <div class="image-container"><img src="../pics/IMG_8202.jpg" alt="Dashboard Design 5"></div>
+        <div class="image-container"><img src="../pics/IMG_8203.jpg" alt="Dashboard Design 6"></div>
+        <div class="image-container"><img src="../pics/IMG_8204.jpg" alt="Dashboard Design 7"></div>
+        <div class="image-container"><img src="../pics/IMG_8205.jpg" alt="Dashboard Design 8"></div>
+        <div class="image-container"><img src="../pics/IMG_8206.jpg" alt="Dashboard Design 9"></div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,1 @@
+dotnet run -- --sync-daily --backfill

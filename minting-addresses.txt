@@ -1,0 +1,33 @@
+Rewards Address - optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst
+Distribution Address - optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst
+
+== Network Totals (All-Time) ==
+Scanning MsgMultiSend transactions...
+Scanning MsgDelegate transactions...
+Distributed (all addresses): 6771740.911809 OPT
+Staked (all validators):     8013996457.253775 OPT
+
+
+Next question
+add a script/command that:
+
+reads total supply (emitted),
+sums MultiSend payouts from the source,
+and shows “undistributed = emitted - distributed” plus balances still parked in those addresses.
+
+------------------------------------------------------------------------------------------------------
+
+
+Here’s the minting/distribution flow based on the module accounts we just queried:
+
+Mint module (module_accounts.mint) is the on‑chain mint source. On Optio, annual_provisions is 0, so emissions aren’t inflation‑driven. If minting happens, it likely comes from manual/parameterized actions and lands in the mint module account first.
+Distribution module (module_accounts.distribution / module_accounts.distro) holds rewards pools. In your case, distribution has a non‑zero balance, distro is zero.
+Hot wallet payout (optio103r5...) is not a module account; it’s a normal account. It likely receives funds from distribution (or another module account) and then performs MsgMultiSend payouts to users.
+Validator pools: bonded_tokens_pool and not_bonded_tokens_pool are staking pools (not part of distribution payouts).
+So the likely flow is:
+
+Minting (if any) → module_accounts.mint
+Funds → module_accounts.distribution (or distro)
+Transfer to hot wallet optio103r5...
+MsgMultiSend payouts to users
+

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Rounded square background -->
+  <rect x="16" y="16" width="224" height="224" rx="32" fill="#1a2540"/>
+  
+  <!-- Eye shape -->
+  <!-- Left eyelid -->
+  <path d="M 60 128 Q 90 100 128 95 Q 166 100 196 128 Q 166 156 128 161 Q 90 156 60 128 Z" 
+        fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Iris/pupil circle -->
+  <circle cx="128" cy="128" r="18" fill="none" stroke="#ffffff" stroke-width="4"/>
+  
+  <!-- Cyan accent through pupil -->
+  <circle cx="128" cy="128" r="12" fill="#10b981"/>
+  
+  <!-- Highlight -->
+  <circle cx="132" cy="124" r="4" fill="#a7f3d0" opacity="0.8"/>
+</svg>

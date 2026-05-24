@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Define gradient for subtle depth -->
+  <defs>
+    <linearGradient id="opticGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0e27;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a2540;stop-opacity:1" />
+    </linearGradient>
+    <filter id="softShadow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2"/>
+    </filter>
+  </defs>
+  
+  <!-- Background (optional, remove for transparent) -->
+  <!-- <rect width="256" height="256" fill="white"/> -->
+  
+  <!-- Outer hexagonal frame - represents institutional structure -->
+  <polygon points="128,24 204,64 204,192 128,232 52,192 52,64" 
+           fill="none" stroke="#10b981" stroke-width="2" opacity="0.3"/>
+  
+  <!-- Primary aperture - 6 segments representing clarity and observation -->
+  <g id="aperture">
+    <!-- Segment 1 (top) -->
+    <path d="M 128 50 L 165 85 L 165 110 L 128 80 Z" fill="#10b981" opacity="0.25"/>
+    <!-- Segment 2 (upper right) -->
+    <path d="M 165 85 L 195 110 L 195 145 L 165 110 Z" fill="#10b981" opacity="0.35"/>
+    <!-- Segment 3 (lower right) -->
+    <path d="M 165 145 L 195 170 L 165 195 L 128 170 Z" fill="#10b981" opacity="0.25"/>
+    <!-- Segment 4 (bottom) -->
+    <path d="M 128 180 L 91 195 L 91 170 L 128 195 Z" fill="#10b981" opacity="0.35"/>
+    <!-- Segment 5 (lower left) -->
+    <path d="M 91 145 L 61 170 L 61 135 L 91 110 Z" fill="#10b981" opacity="0.25"/>
+    <!-- Segment 6 (upper left) -->
+    <path d="M 91 85 L 61 110 L 91 135 L 128 110 Z" fill="#10b981" opacity="0.35"/>
+  </g>
+  
+  <!-- Central eye/focus point - represents precision and observation -->
+  <circle cx="128" cy="128" r="28" fill="none" stroke="#10b981" stroke-width="2.5"/>
+  <circle cx="128" cy="128" r="18" fill="none" stroke="#10b981" stroke-width="1.5" opacity="0.7"/>
+  <circle cx="128" cy="128" r="8" fill="#10b981"/>
+  
+  <!-- Data convergence lines - suggest analytics and signal extraction -->
+  <line x1="128" y1="40" x2="128" y2="60" stroke="#10b981" stroke-width="1.5" opacity="0.6"/>
+  <line x1="128" y1="196" x2="128" y2="216" stroke="#10b981" stroke-width="1.5" opacity="0.6"/>
+  
+  <line x1="40" y1="128" x2="60" y2="128" stroke="#10b981" stroke-width="1.5" opacity="0.6"/>
+  <line x1="196" y1="128" x2="216" y2="128" stroke="#10b981" stroke-width="1.5" opacity="0.6"/>
+  
+  <!-- Diagonal accent lines - suggest depth and dimensionality -->
+  <line x1="68" y1="68" x2="85" y2="85" stroke="#10b981" stroke-width="1.5" opacity="0.5"/>
+  <line x1="188" y1="68" x2="171" y2="85" stroke="#10b981" stroke-width="1.5" opacity="0.5"/>
+  <line x1="68" y1="188" x2="85" y2="171" stroke="#10b981" stroke-width="1.5" opacity="0.5"/>
+  <line x1="188" y1="188" x2="171" y2="171" stroke="#10b981" stroke-width="1.5" opacity="0.5"/>
+  
+  <!-- Precision indicator - small geometric accent -->
+  <rect x="120" y="120" width="16" height="16" fill="none" stroke="#10b981" stroke-width="1" opacity="0.4"/>
+</svg>

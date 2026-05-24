@@ -1,0 +1,26 @@
+# .NET build output
+bin/
+obj/
+.vs/
+OPTIC/obj/*
+OPTIC/bin/*
+
+# temp/download folders
+tmp/
+tmp2/
+OPTIC/tmp/*
+OPTIC/tmp2/*
+
+# binaries and build artifacts
+*.exe
+*.dll
+*.pdb
+
+# local databases
+*.db
+*.db-shm
+*.db-wal
+OPTIC/odata/optic.db
+
+# logs
+*.log

@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client" Version="2.66.0" />
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="protos\**\*.proto" Exclude="protos\google\protobuf\**\*.proto" ProtoRoot="protos" GrpcServices="None" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Update="protos\cosmos\tx\v1beta1\service.proto" ProtoRoot="protos" GrpcServices="Client" />
+    <Protobuf Update="protos\optio\lockup\query.proto" ProtoRoot="protos" GrpcServices="Client" />
+  </ItemGroup>
+
+
+</Project>

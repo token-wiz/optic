@@ -1,0 +1,954 @@
+﻿using System.Globalization;
+using System.Text.Json;
+using Grpc.Net.Client;
+using Cosmos.Tx.V1Beta1;
+using Cosmos.Base.Query.V1Beta1;
+using Cosmos.Base.Abci.V1Beta1;
+
+// ======================================================================
+// TOP-LEVEL PROGRAM (all executable statements are here, BEFORE types)
+// ======================================================================
+
+Console.WriteLine("OPTIC - Optio Protocol Telemetry & Intelligence Center");
+Console.WriteLine("Address ledger (sent/recv, from/to, amount, fee, running balance)");
+
+// ---------------- Defaults ----------------
+const string DefaultGrpc = "127.0.0.1:9090";
+const string DefaultLcdBase = "http://127.0.0.1:1317";
+const string DefaultDenom = "uopt";
+const int DefaultLookbackDays = 3650;
+const int DefaultPageLimit = 100;
+const int DefaultMaxPages = 50000;
+const string ConfigFile = "optic.conf";
+
+// ---------------- Diagnostics ----------------
+Console.WriteLine();
+Console.WriteLine($"CWD:          {Environment.CurrentDirectory}");
+Console.WriteLine($"Config path:  {Path.GetFullPath(ConfigFile)}");
+Console.WriteLine($"Config exists:{File.Exists(ConfigFile)}");
+Console.WriteLine();
+
+// ---------------- Load Config ----------------
+if (!File.Exists(ConfigFile))
+{
+    Console.WriteLine($"Missing config file: {ConfigFile}");
+    Console.WriteLine("Example:");
+    Console.WriteLine("  addr=optio1...");
+    Console.WriteLine("Optional:");
+    Console.WriteLine("  grpc=127.0.0.1:9090");
+    Console.WriteLine("  lcd=http://127.0.0.1:1317");
+    Console.WriteLine("  denom=uopt");
+    Console.WriteLine("  lookbackDays=3650");
+    Console.WriteLine("  pageLimit=100");
+    Console.WriteLine("  maxPages=50000");
+    return;
+}
+
+var cfg = LoadConfig(ConfigFile);
+
+if (!cfg.TryGetValue("addr", out var addr) || string.IsNullOrWhiteSpace(addr))
+{
+    Console.WriteLine("Config error: addr is required.");
+    return;
+}
+
+var grpcTarget = cfg.GetValueOrDefault("grpc", DefaultGrpc);
+var lcdBase = cfg.GetValueOrDefault("lcd", DefaultLcdBase);
+var denom = cfg.GetValueOrDefault("denom", DefaultDenom);
+
+var lookbackDays = int.TryParse(cfg.GetValueOrDefault("lookbackDays"), out var d) ? d : DefaultLookbackDays;
+var pageLimit = int.TryParse(cfg.GetValueOrDefault("pageLimit"), out var pl) ? pl : DefaultPageLimit;
+var maxPages = int.TryParse(cfg.GetValueOrDefault("maxPages"), out var mp) ? mp : DefaultMaxPages;
+
+if (pageLimit <= 0) pageLimit = DefaultPageLimit;
+if (pageLimit > 100) pageLimit = 100;
+if (maxPages <= 0) maxPages = DefaultMaxPages;
+
+// America/New_York on Windows (fallback so it never crashes)
+TimeZoneInfo tz;
+try { tz = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"); }
+catch { tz = TimeZoneInfo.Local; }
+
+Console.WriteLine("== Config ==");
+Console.WriteLine($"Addr:         {addr}");
+Console.WriteLine($"Denom:        {denom} (case-insensitive match)");
+Console.WriteLine($"Timezone:     {tz.DisplayName}");
+Console.WriteLine($"gRPC:         {grpcTarget}");
+Console.WriteLine($"REST (LCD):   {lcdBase}");
+Console.WriteLine($"LookbackDays: {lookbackDays}");
+Console.WriteLine($"PageLimit:    {pageLimit} (clamped)");
+Console.WriteLine($"MaxPages:     {maxPages}");
+
+var cutoffUtc = DateTimeOffset.UtcNow.AddDays(-lookbackDays);
+var denomWantedUpper = denom.ToUpperInvariant();
+
+// denom scale (u* usually 1e6)
+var scale = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000m : 1m;
+
+// ---------------- Clients ----------------
+using var channel = GrpcChannel.ForAddress($"http://{grpcTarget}");
+var txClient = new Service.ServiceClient(channel); // GetTxsEvent + GetTx
+
+using var http = new HttpClient
+{
+    BaseAddress = new Uri(lcdBase.TrimEnd('/') + "/"),
+    Timeout = TimeSpan.FromSeconds(60),
+};
+
+// =======================================================================
+// Balances Summary (NEW) - derives locked from module state (REST)
+// =======================================================================
+Console.WriteLine();
+Console.WriteLine("== Balances Summary ==");
+
+var summary = await GetBalancesSummaryAsync(http, addr, denomWantedUpper);
+PrintBalancesSummary(summary, denomWantedUpper, scale);
+
+// =======================================================================
+// Ledger output (unchanged aside from earlier Memo column)
+// =======================================================================
+
+// ---------------- 1) Collect TxResponses (by hash) from GetTxsEvent ----------------
+Console.WriteLine();
+Console.WriteLine("Scanning tx responses via gRPC GetTxsEvent (page-key paging)...");
+
+var txByHash = new Dictionary<string, TxResponse>(StringComparer.OrdinalIgnoreCase);
+
+var querySpecs = new (string Label, string Query)[]
+{
+    ("recv.transfer",      $"transfer.recipient='{addr}'"),
+    ("recv.coin_received", $"coin_received.receiver='{addr}'"),
+    ("sent.transfer",      $"transfer.sender='{addr}'"),
+    ("sent.coin_spent",    $"coin_spent.spender='{addr}'"),
+    ("sent.message",       $"message.sender='{addr}'"),
+    ("sent.bank_module",   $"message.module='bank' AND message.sender='{addr}'"),
+    ("sent.staking_module",$"message.module='staking' AND message.sender='{addr}'"),
+};
+
+foreach (var (label, query) in querySpecs)
+{
+    await AddTxResponsesForQuery_PageKey(txClient, query, txByHash, cutoffUtc, pageLimit, maxPages, label);
+}
+
+Console.WriteLine();
+Console.WriteLine($"Unique tx responses collected: {txByHash.Count}");
+if (txByHash.Count == 0)
+{
+    Console.WriteLine("No transactions found.");
+    return;
+}
+
+// ---------------- 2) Resolve memo for each tx (B: real memo via GetTx; A: fallback label) ----------------
+Console.WriteLine();
+Console.WriteLine("Resolving memos via gRPC GetTx (real memo) with fallback labels...");
+
+var memoByHash = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+int memoReal = 0, memoFallback = 0;
+
+foreach (var kv in txByHash)
+{
+    var h = kv.Key;
+    var tr = kv.Value;
+
+    var real = await TryGetRealMemoAsync(txClient, h);
+    if (!string.IsNullOrWhiteSpace(real))
+    {
+        memoByHash[h] = real!;
+        memoReal++;
+    }
+    else
+    {
+        memoByHash[h] = InferMemoLabel(tr);
+        memoFallback++;
+    }
+}
+
+Console.WriteLine($"Memo: real={memoReal} fallback={memoFallback}");
+
+// ---------------- 3) Build ledger rows from TxResponse.Events ----------------
+var rows = new List<LedgerRow>(txByHash.Count * 2);
+var seenRow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+const string DebugHash = "FE8A60C7E8B9190491E1D620832A8AC0789F751324345A57AD3CDC9A8207A6D8";
+
+foreach (var tr in txByHash.Values)
+{
+    var txHash = tr.Txhash ?? "";
+    if (string.IsNullOrWhiteSpace(txHash)) continue;
+
+    // REQUIRED DEBUG LINE (your request)
+    if (txHash == DebugHash) Console.WriteLine($"DEBUG saw hash {txHash} ts={tr.Timestamp} events={tr.Events.Count}");
+
+    // Helpful: dump event attributes for that hash to explain why it’s skipped
+    if (txHash == DebugHash) DumpTxEventsForDebug(tr);
+
+    if (!DateTimeOffset.TryParse(tr.Timestamp, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var ts))
+        continue;
+
+    var tsUtc = ts.ToUniversalTime();
+    if (tsUtc < cutoffUtc) continue;
+
+    var timeUtc = tsUtc.UtcDateTime;
+
+    // Fee + payer from "tx" event
+    var (feeUnits, feePayer) = GetFeeFromTxEvent(tr, denomWantedUpper);
+    var feeApplied = feeUnits > 0m &&
+                     !string.IsNullOrWhiteSpace(feePayer) &&
+                     feePayer.Equals(addr, StringComparison.OrdinalIgnoreCase);
+
+    var memo = memoByHash.TryGetValue(txHash, out var m) ? m : "";
+
+    // First pass: “real” transfers (filters fee-transfers)
+    var transferRows = ExtractTransfersFromEvents(tr, addr, denomWantedUpper, feeUnits, feePayer).ToList();
+
+    // If no transfer rows, fallback to coin_received/coin_spent rows
+    if (transferRows.Count == 0)
+        transferRows.AddRange(ExtractCoinFallbackRows(tr, addr, denomWantedUpper));
+
+    foreach (var r in transferRows)
+    {
+        r.TimeUtc = timeUtc;
+        r.TxHash = txHash;
+        r.FeeInDenomUnits = feeUnits;
+        r.FeeApplied = feeApplied;
+        r.Memo = memo;
+
+        var key = $"{txHash}|{r.Direction}|{r.From}|{r.To}|{r.AmountInDenomUnits.ToString(CultureInfo.InvariantCulture)}|{r.Memo}";
+        if (seenRow.Add(key))
+            rows.Add(r);
+    }
+}
+
+if (rows.Count == 0)
+{
+    Console.WriteLine("(tx responses found, but no matching events in desired denom)");
+    return;
+}
+
+// Sort rows
+rows.Sort((a, b) =>
+{
+    var c = a.TimeUtc.CompareTo(b.TimeUtc);
+    if (c != 0) return c;
+    c = string.Compare(a.Direction, b.Direction, StringComparison.OrdinalIgnoreCase);
+    if (c != 0) return c;
+    c = string.Compare(a.From, b.From, StringComparison.OrdinalIgnoreCase);
+    if (c != 0) return c;
+    return string.Compare(a.To, b.To, StringComparison.OrdinalIgnoreCase);
+});
+
+// ---------------- 4) Print ledger (aligned headers, no TxHash, no commas) ----------------
+Console.WriteLine();
+Console.WriteLine("== Ledger ==");
+
+// fee shown once per txhash
+var feeByTx = rows
+    .Where(r => r.FeeInDenomUnits > 0m)
+    .GroupBy(r => r.TxHash, StringComparer.OrdinalIgnoreCase)
+    .ToDictionary(g => g.Key, g => g.Max(x => x.FeeInDenomUnits), StringComparer.OrdinalIgnoreCase);
+
+var feeShown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+var feeAppliedAlready = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+// widths
+const int TimeWidth = 19;   // yyyy-MM-dd HH:mm:ss
+const int DirWidth = 4;     // recv/sent
+const int AmtWidth = 16;    // 8 left + '.' + 6 right + sign space
+const int FeeWidth = 16;
+const int RunWidth = 16;
+const int MemoWidth = 22;
+const int FromWidth = 48;
+const int ToWidth = 48;
+
+static string Num6(decimal x, int width) => x.ToString("0.000000", CultureInfo.InvariantCulture).PadLeft(width);
+static string Blank(int width) => new string(' ', width);
+
+static string Left(string s, int width)
+{
+    if (s.Length > width) return s[..width];
+    return s.PadRight(width);
+}
+
+static string Right(string s, int width)
+{
+    if (s.Length > width) return s[..width];
+    return s.PadLeft(width);
+}
+
+// Header
+Console.WriteLine(
+    $"{Left("Time", TimeWidth)} " +
+    $"{Left("Dir", DirWidth)} " +
+    $"{Right("Amount(OPT)", AmtWidth)} " +
+    $"{Right("Fee(OPT)", FeeWidth)} " +
+    $"{Right("Running(OPT)", RunWidth)} " +
+    $"{Left("Memo", MemoWidth)} " +
+    $"{Left("From Address", FromWidth)} " +
+    $"{Left("To Address", ToWidth)}"
+);
+
+Console.WriteLine(new string('-', TimeWidth + 1 + DirWidth + 1 + AmtWidth + 1 + FeeWidth + 1 + RunWidth + 1 + MemoWidth + 1 + FromWidth + 1 + ToWidth));
+
+decimal runningUnits = 0m;
+
+foreach (var r in rows)
+{
+    var signedUnits = r.Direction == "recv" ? r.AmountInDenomUnits : -r.AmountInDenomUnits;
+    runningUnits += signedUnits;
+
+    if (r.FeeApplied && !feeAppliedAlready.Contains(r.TxHash))
+    {
+        runningUnits -= r.FeeInDenomUnits;
+        feeAppliedAlready.Add(r.TxHash);
+    }
+
+    var local = TimeZoneInfo.ConvertTimeFromUtc(r.TimeUtc, tz);
+    var amountOpt = r.AmountInDenomUnits / scale;
+    var runningOpt = runningUnits / scale;
+
+    decimal feeToShowUnits = 0m;
+    if (!feeShown.Contains(r.TxHash) && feeByTx.TryGetValue(r.TxHash, out var f))
+    {
+        feeToShowUnits = f;
+        feeShown.Add(r.TxHash);
+    }
+
+    var feeOpt = feeToShowUnits / scale;
+
+    Console.WriteLine(
+        $"{local:yyyy-MM-dd HH:mm:ss} " +
+        $"{Left(r.Direction, DirWidth)} " +
+        $"{Num6(amountOpt, AmtWidth)} " +
+        $"{(feeToShowUnits > 0m ? Num6(feeOpt, FeeWidth) : Blank(FeeWidth))} " +
+        $"{Num6(runningOpt, RunWidth)} " +
+        $"{Left(TruncateMiddle(r.Memo ?? "", MemoWidth), MemoWidth)} " +
+        $"{Left(TruncateMiddle(r.From, FromWidth), FromWidth)} " +
+        $"{Left(TruncateMiddle(r.To, ToWidth), ToWidth)}"
+    );
+}
+
+Console.WriteLine(new string('-', TimeWidth + 1 + DirWidth + 1 + AmtWidth + 1 + FeeWidth + 1 + RunWidth + 1 + MemoWidth + 1 + FromWidth + 1 + ToWidth));
+Console.WriteLine($"Net change over window (incl fees): {(runningUnits / scale).ToString("0.000000", CultureInfo.InvariantCulture)} OPT");
+
+// ======================================================================
+// BELOW THIS POINT: ONLY METHODS + TYPES (NO TOP-LEVEL STATEMENTS)
+// ======================================================================
+
+// ---------------- Balances Summary helpers (REST-derived) ----------------
+
+static async Task<BalancesSummary> GetBalancesSummaryAsync(HttpClient http, string addr, string denomWantedUpper)
+{
+    var s = new BalancesSummary();
+
+    s.BankBalanceUnits = await TryGetBankBalanceUnitsAsync(http, addr, denomWantedUpper);
+    s.SpendableBalanceUnits = await TryGetSpendableBalanceUnitsAsync(http, addr, denomWantedUpper);
+
+    s.DelegatedUnits = await TryGetDelegatedUnitsAsync(http, addr, denomWantedUpper);
+    s.UnbondingUnits = await TryGetUnbondingUnitsAsync(http, addr, denomWantedUpper);
+    s.RedelegatingUnits = await TryGetRedelegatingUnitsAsync(http, addr, denomWantedUpper);
+
+    s.GovDepositUnits = await TryGetGovDepositsUnitsAsync(http, addr, denomWantedUpper);
+
+    s.IsVestingAccount = await TryDetectVestingAccountAsync(http, addr);
+
+    if (s.IsVestingAccount && s.BankBalanceUnits.HasValue && s.SpendableBalanceUnits.HasValue)
+    {
+        var locked = s.BankBalanceUnits.Value - s.SpendableBalanceUnits.Value;
+        s.VestingLockedUnits = locked > 0m ? locked : 0m;
+    }
+    else
+    {
+        s.VestingLockedUnits = null;
+    }
+
+    s.LockedTotalUnits =
+        (s.DelegatedUnits ?? 0m) +
+        (s.UnbondingUnits ?? 0m) +
+        (s.RedelegatingUnits ?? 0m) +
+        (s.GovDepositUnits ?? 0m) +
+        (s.VestingLockedUnits ?? 0m);
+
+    return s;
+}
+
+static void PrintBalancesSummary(BalancesSummary s, string denomWantedUpper, decimal scale)
+{
+    static string F(decimal x) => x.ToString("0.000000", CultureInfo.InvariantCulture);
+    static string ShowOpt(decimal? units, decimal scale) => units.HasValue ? F(units.Value / scale) : "(unavailable)";
+
+    Console.WriteLine($"Bank balance:       {ShowOpt(s.BankBalanceUnits, scale)}");
+    Console.WriteLine($"Spendable balance:  {ShowOpt(s.SpendableBalanceUnits, scale)}");
+    Console.WriteLine($"Locked total:       {ShowOpt(s.LockedTotalUnits, scale)}");
+
+    Console.WriteLine("Breakdown:");
+    Console.WriteLine($"  Delegated:        {ShowOpt(s.DelegatedUnits, scale)}");
+    Console.WriteLine($"  Unbonding:        {ShowOpt(s.UnbondingUnits, scale)}");
+    Console.WriteLine($"  Redelegating:     {ShowOpt(s.RedelegatingUnits, scale)}");
+    Console.WriteLine($"  Gov deposits:     {ShowOpt(s.GovDepositUnits, scale)}");
+    Console.WriteLine($"  Vesting locked:   {(s.IsVestingAccount ? ShowOpt(s.VestingLockedUnits, scale) : "(not vesting)")}");
+}
+
+static async Task<JsonDocument?> TryGetJsonAsync(HttpClient http, string relativeUrl)
+{
+    try
+    {
+        using var resp = await http.GetAsync(relativeUrl);
+        if (!resp.IsSuccessStatusCode) return null;
+        var json = await resp.Content.ReadAsStringAsync();
+        return JsonDocument.Parse(json);
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static async Task<decimal?> TryGetBankBalanceUnitsAsync(HttpClient http, string addr, string denomWantedUpper)
+{
+    var doc = await TryGetJsonAsync(http, $"cosmos/bank/v1beta1/balances/{addr}?pagination.limit=2000");
+    if (doc == null) return null;
+
+    if (!doc.RootElement.TryGetProperty("balances", out var balances) || balances.ValueKind != JsonValueKind.Array)
+        return 0m;
+
+    decimal total = 0m;
+    foreach (var coin in balances.EnumerateArray())
+    {
+        var denom = coin.TryGetProperty("denom", out var d) ? d.GetString() : null;
+        var amt = coin.TryGetProperty("amount", out var a) ? a.GetString() : null;
+        if (string.IsNullOrWhiteSpace(denom) || string.IsNullOrWhiteSpace(amt)) continue;
+
+        if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal)) continue;
+        if (decimal.TryParse(amt, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)) total += n;
+    }
+
+    return total;
+}
+
+static async Task<decimal?> TryGetSpendableBalanceUnitsAsync(HttpClient http, string addr, string denomWantedUpper)
+{
+    var doc = await TryGetJsonAsync(http, $"cosmos/bank/v1beta1/spendable_balances/{addr}?pagination.limit=2000");
+    if (doc == null) return null;
+
+    JsonElement arr;
+    if (doc.RootElement.TryGetProperty("balances", out arr) && arr.ValueKind == JsonValueKind.Array)
+    {
+        // ok
+    }
+    else if (doc.RootElement.TryGetProperty("spendable_balances", out arr) && arr.ValueKind == JsonValueKind.Array)
+    {
+        // ok
+    }
+    else
+    {
+        return null;
+    }
+
+    decimal total = 0m;
+    foreach (var coin in arr.EnumerateArray())
+    {
+        var denom = coin.TryGetProperty("denom", out var d) ? d.GetString() : null;
+        var amt = coin.TryGetProperty("amount", out var a) ? a.GetString() : null;
+        if (string.IsNullOrWhiteSpace(denom) || string.IsNullOrWhiteSpace(amt)) continue;
+
+        if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal)) continue;
+        if (decimal.TryParse(amt, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)) total += n;
+    }
+
+    return total;
+}
+
+static async Task<decimal?> TryGetDelegatedUnitsAsync(HttpClient http, string addr, string denomWantedUpper)
+{
+    var doc = await TryGetJsonAsync(http, $"cosmos/staking/v1beta1/delegations/{addr}?pagination.limit=2000");
+    if (doc == null) return null;
+
+    if (!doc.RootElement.TryGetProperty("delegation_responses", out var arr) || arr.ValueKind != JsonValueKind.Array)
+        return 0m;
+
+    decimal total = 0m;
+    foreach (var dr in arr.EnumerateArray())
+    {
+        if (!dr.TryGetProperty("balance", out var bal)) continue;
+        var denom = bal.TryGetProperty("denom", out var d) ? d.GetString() : null;
+        var amt = bal.TryGetProperty("amount", out var a) ? a.GetString() : null;
+        if (string.IsNullOrWhiteSpace(denom) || string.IsNullOrWhiteSpace(amt)) continue;
+
+        if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal)) continue;
+        if (decimal.TryParse(amt, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)) total += n;
+    }
+
+    return total;
+}
+
+static async Task<decimal?> TryGetUnbondingUnitsAsync(HttpClient http, string addr, string denomWantedUpper)
+{
+    var doc = await TryGetJsonAsync(http, $"cosmos/staking/v1beta1/delegators/{addr}/unbonding_delegations?pagination.limit=2000");
+    if (doc == null) return null;
+
+    if (!doc.RootElement.TryGetProperty("unbonding_responses", out var arr) || arr.ValueKind != JsonValueKind.Array)
+        return 0m;
+
+    decimal total = 0m;
+    foreach (var ur in arr.EnumerateArray())
+    {
+        if (!ur.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array) continue;
+        foreach (var e in entries.EnumerateArray())
+        {
+            var balStr = e.TryGetProperty("balance", out var b) ? b.GetString() : null;
+            if (string.IsNullOrWhiteSpace(balStr)) continue;
+            if (decimal.TryParse(balStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)) total += n;
+        }
+    }
+
+    return total;
+}
+
+static async Task<decimal?> TryGetRedelegatingUnitsAsync(HttpClient http, string addr, string denomWantedUpper)
+{
+    var doc = await TryGetJsonAsync(http, $"cosmos/staking/v1beta1/delegators/{addr}/redelegations?pagination.limit=2000");
+    if (doc == null) return null;
+
+    if (!doc.RootElement.TryGetProperty("redelegation_responses", out var arr) || arr.ValueKind != JsonValueKind.Array)
+        return 0m;
+
+    decimal total = 0m;
+    foreach (var rr in arr.EnumerateArray())
+    {
+        if (!rr.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array) continue;
+        foreach (var e in entries.EnumerateArray())
+        {
+            var balStr = e.TryGetProperty("balance", out var b) ? b.GetString() : null;
+            if (string.IsNullOrWhiteSpace(balStr)) continue;
+            if (decimal.TryParse(balStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)) total += n;
+        }
+    }
+
+    return total;
+}
+
+static async Task<List<string>> TryGetProposalIdsAsync(HttpClient http, string govBase, string proposalStatus)
+{
+    var doc = await TryGetJsonAsync(http, $"{govBase}/proposals?proposal_status={Uri.EscapeDataString(proposalStatus)}&pagination.limit=2000");
+    if (doc == null) return new List<string>();
+
+    if (!doc.RootElement.TryGetProperty("proposals", out var arr) || arr.ValueKind != JsonValueKind.Array)
+        return new List<string>();
+
+    var ids = new List<string>();
+    foreach (var p in arr.EnumerateArray())
+    {
+        if (p.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
+            ids.Add(idEl.GetString() ?? "");
+        else if (p.TryGetProperty("proposal_id", out var pidEl) && pidEl.ValueKind == JsonValueKind.String)
+            ids.Add(pidEl.GetString() ?? "");
+        else if (p.TryGetProperty("proposal_id", out var pidNum) && pidNum.ValueKind == JsonValueKind.Number)
+            ids.Add(pidNum.GetRawText());
+        else if (p.TryGetProperty("id", out var idNum) && idNum.ValueKind == JsonValueKind.Number)
+            ids.Add(idNum.GetRawText());
+    }
+
+    return ids.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+}
+
+static async Task<decimal?> TryGetGovDepositsUnitsAsync(HttpClient http, string depositorAddr, string denomWantedUpper)
+{
+    var proposalIds = new List<string>();
+
+    proposalIds.AddRange(await TryGetProposalIdsAsync(http, "cosmos/gov/v1", "PROPOSAL_STATUS_DEPOSIT_PERIOD"));
+    proposalIds.AddRange(await TryGetProposalIdsAsync(http, "cosmos/gov/v1", "PROPOSAL_STATUS_VOTING_PERIOD"));
+
+    string govBase = "cosmos/gov/v1";
+    bool usedV1 = proposalIds.Count > 0;
+
+    if (!usedV1)
+    {
+        proposalIds.AddRange(await TryGetProposalIdsAsync(http, "cosmos/gov/v1beta1", "PROPOSAL_STATUS_DEPOSIT_PERIOD"));
+        proposalIds.AddRange(await TryGetProposalIdsAsync(http, "cosmos/gov/v1beta1", "PROPOSAL_STATUS_VOTING_PERIOD"));
+        govBase = "cosmos/gov/v1beta1";
+    }
+
+    if (proposalIds.Count == 0) return 0m;
+
+    decimal total = 0m;
+
+    foreach (var id in proposalIds.Distinct(StringComparer.Ordinal))
+    {
+        var doc = await TryGetJsonAsync(http, $"{govBase}/proposals/{id}/deposits/{depositorAddr}");
+        if (doc == null) continue;
+
+        if (!doc.RootElement.TryGetProperty("deposit", out var dep)) continue;
+        if (!dep.TryGetProperty("amount", out var amtArr) || amtArr.ValueKind != JsonValueKind.Array) continue;
+
+        foreach (var coin in amtArr.EnumerateArray())
+        {
+            var denom = coin.TryGetProperty("denom", out var d) ? d.GetString() : null;
+            var amt = coin.TryGetProperty("amount", out var a) ? a.GetString() : null;
+            if (string.IsNullOrWhiteSpace(denom) || string.IsNullOrWhiteSpace(amt)) continue;
+
+            if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal)) continue;
+            if (decimal.TryParse(amt, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)) total += n;
+        }
+    }
+
+    return total;
+}
+
+static async Task<bool> TryDetectVestingAccountAsync(HttpClient http, string addr)
+{
+    var doc = await TryGetJsonAsync(http, $"cosmos/auth/v1beta1/accounts/{addr}");
+    if (doc == null) return false;
+
+    if (!doc.RootElement.TryGetProperty("account", out var acc)) return false;
+
+    var type = acc.TryGetProperty("@type", out var t) ? t.GetString() : null;
+    if (string.IsNullOrWhiteSpace(type)) return false;
+
+    return type.Contains("vesting", StringComparison.OrdinalIgnoreCase);
+}
+
+// ---------------- gRPC paging (PageRequest.Key) ----------------
+
+static async Task AddTxResponsesForQuery_PageKey(
+    Service.ServiceClient txClient,
+    string query,
+    Dictionary<string, TxResponse> txByHash,
+    DateTimeOffset cutoffUtc,
+    int pageLimit,
+    int maxPages,
+    string label)
+{
+    Console.WriteLine();
+    Console.WriteLine($"Query ({label}): {query}");
+
+    byte[]? key = null;
+    bool any = false;
+
+    for (int page = 1; page <= maxPages; page++)
+    {
+        var req = new GetTxsEventRequest { Query = query };
+
+#pragma warning disable CS0612
+        req.Pagination = new PageRequest
+        {
+            Limit = (ulong)pageLimit,
+            Key = key == null ? Google.Protobuf.ByteString.Empty : Google.Protobuf.ByteString.CopyFrom(key),
+            CountTotal = false
+        };
+#pragma warning restore CS0612
+
+        GetTxsEventResponse resp;
+        try
+        {
+            resp = await txClient.GetTxsEventAsync(req);
+        }
+        catch (Grpc.Core.RpcException ex)
+        {
+            Console.WriteLine($"  ERROR ({ex.StatusCode}): {ex.Status.Detail}");
+            break;
+        }
+
+        var count = resp.TxResponses.Count;
+        if (count == 0)
+        {
+            Console.WriteLine(any ? $"  page={page} txs=0 (done)" : "  page=1 txs=0 (no matches)");
+            break;
+        }
+
+        any = true;
+
+        int added = 0;
+        foreach (var tr in resp.TxResponses)
+        {
+            if (DateTimeOffset.TryParse(tr.Timestamp, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var ts) &&
+                ts.ToUniversalTime() < cutoffUtc)
+            {
+                continue;
+            }
+
+            var h = tr.Txhash ?? "";
+            if (h.Length == 0) continue;
+
+            if (!txByHash.ContainsKey(h))
+            {
+                txByHash[h] = tr;
+                added++;
+            }
+        }
+
+#pragma warning disable CS0612
+        var nextKey = resp.Pagination?.NextKey;
+#pragma warning restore CS0612
+
+        var nextLen = nextKey?.Length ?? 0;
+        Console.WriteLine($"  page={page} txs={count} new_txs={added} total_txs={txByHash.Count} nextKeyLen={nextLen}");
+
+        if (nextKey == null || nextKey.Length == 0)
+            break;
+
+        key = nextKey.ToByteArray();
+    }
+}
+
+// ---------------- Memo: real via GetTx + fallback label ----------------
+
+static async Task<string?> TryGetRealMemoAsync(Service.ServiceClient txClient, string txHash)
+{
+    try
+    {
+        var resp = await txClient.GetTxAsync(new GetTxRequest { Hash = txHash });
+        var memo = resp?.Tx?.Body?.Memo;
+        if (string.IsNullOrWhiteSpace(memo)) return null;
+        return memo;
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static string InferMemoLabel(TxResponse tr)
+{
+    string? action = null;
+    string? module = null;
+
+    foreach (var ev in tr.Events)
+    {
+        if (ev.Type != "message") continue;
+
+        foreach (var a in ev.Attributes)
+        {
+            if (a.Key == "action" && !string.IsNullOrWhiteSpace(a.Value)) action ??= a.Value;
+            if (a.Key == "module" && !string.IsNullOrWhiteSpace(a.Value)) module ??= a.Value;
+        }
+    }
+
+    var shortAction = ShortTypeName(action);
+    if (!string.IsNullOrWhiteSpace(module) && !string.IsNullOrWhiteSpace(shortAction))
+        return $"{module}:{shortAction}";
+
+    if (!string.IsNullOrWhiteSpace(shortAction)) return shortAction!;
+    if (!string.IsNullOrWhiteSpace(module)) return module!;
+    return "";
+}
+
+static string? ShortTypeName(string? typeUrl)
+{
+    if (string.IsNullOrWhiteSpace(typeUrl)) return null;
+    var t = typeUrl.Trim();
+
+    var slash = t.LastIndexOf('/');
+    if (slash >= 0 && slash + 1 < t.Length) return t[(slash + 1)..];
+
+    var dot = t.LastIndexOf('.');
+    if (dot >= 0 && dot + 1 < t.Length) return t[(dot + 1)..];
+
+    return t;
+}
+
+// ---------------- Event parsing ----------------
+
+static IEnumerable<LedgerRow> ExtractTransfersFromEvents(
+    TxResponse tr,
+    string addr,
+    string denomWantedUpper,
+    decimal feeUnits,
+    string? feePayer)
+{
+    foreach (var ev in tr.Events)
+    {
+        if (!string.Equals(ev.Type, "transfer", StringComparison.Ordinal)) continue;
+
+        string? sender = null;
+        string? recipient = null;
+        decimal amountUnits = 0m;
+        bool hasMsgIndex = false;
+
+        foreach (var a in ev.Attributes)
+        {
+            var k = a.Key ?? "";
+            var v = a.Value ?? "";
+
+            if (k == "sender") sender = v;
+            else if (k == "recipient") recipient = v;
+            else if (k == "amount") amountUnits += ParseEventAmountUnits(v, denomWantedUpper);
+            else if (k == "msg_index") hasMsgIndex = true;
+        }
+
+        if (amountUnits <= 0m) continue;
+        if (string.IsNullOrWhiteSpace(sender) || string.IsNullOrWhiteSpace(recipient)) continue;
+
+        bool looksLikeFeeTransfer =
+            !hasMsgIndex &&
+            feeUnits > 0m &&
+            amountUnits == feeUnits &&
+            !string.IsNullOrWhiteSpace(feePayer) &&
+            sender.Equals(feePayer, StringComparison.OrdinalIgnoreCase);
+
+        if (recipient.Equals(addr, StringComparison.OrdinalIgnoreCase))
+            yield return new LedgerRow(DateTime.MinValue, "recv", sender, recipient, amountUnits, "", 0m, false);
+
+        if (sender.Equals(addr, StringComparison.OrdinalIgnoreCase) && !looksLikeFeeTransfer)
+            yield return new LedgerRow(DateTime.MinValue, "sent", sender, recipient, amountUnits, "", 0m, false);
+    }
+}
+
+static IEnumerable<LedgerRow> ExtractCoinFallbackRows(TxResponse tr, string addr, string denomWantedUpper)
+{
+    foreach (var ev in tr.Events)
+    {
+        if (ev.Type != "coin_received" && ev.Type != "coin_spent") continue;
+
+        string? party = null;
+        decimal amountUnits = 0m;
+
+        foreach (var a in ev.Attributes)
+        {
+            var k = a.Key ?? "";
+            var v = a.Value ?? "";
+
+            if (ev.Type == "coin_received" && k == "receiver") party = v;
+            if (ev.Type == "coin_spent" && k == "spender") party = v;
+            if (k == "amount") amountUnits += ParseEventAmountUnits(v, denomWantedUpper);
+        }
+
+        if (amountUnits <= 0m) continue;
+        if (party == null) continue;
+        if (!party.Equals(addr, StringComparison.OrdinalIgnoreCase)) continue;
+
+        if (ev.Type == "coin_received")
+            yield return new LedgerRow(DateTime.MinValue, "recv", "(unknown)", addr, amountUnits, "", 0m, false);
+        else
+            yield return new LedgerRow(DateTime.MinValue, "sent", addr, "(unknown)", amountUnits, "", 0m, false);
+    }
+}
+
+static (decimal FeeUnits, string? FeePayer) GetFeeFromTxEvent(TxResponse tr, string denomWantedUpper)
+{
+    decimal feeUnits = 0m;
+    string? feePayer = null;
+
+    foreach (var ev in tr.Events)
+    {
+        if (!string.Equals(ev.Type, "tx", StringComparison.Ordinal)) continue;
+
+        foreach (var a in ev.Attributes)
+        {
+            var k = a.Key ?? "";
+            var v = a.Value ?? "";
+
+            if (k == "fee") feeUnits += ParseEventAmountUnits(v, denomWantedUpper);
+            else if (k == "fee_payer") feePayer = v;
+        }
+    }
+
+    return (feeUnits, feePayer);
+}
+
+static decimal ParseEventAmountUnits(string amountField, string denomWantedUpper)
+{
+    decimal total = 0m;
+
+    foreach (var part in amountField.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        int i = 0;
+        while (i < part.Length && char.IsDigit(part[i])) i++;
+        if (i == 0 || i == part.Length) continue;
+
+        var numStr = part[..i];
+        var denom = part[i..];
+
+        if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal))
+            continue;
+
+        if (decimal.TryParse(numStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+            total += n;
+    }
+
+    return total;
+}
+
+// ---------------- Debug event dump ----------------
+
+static void DumpTxEventsForDebug(TxResponse tr)
+{
+    Console.WriteLine($"DEBUG events for {tr.Txhash} @ {tr.Timestamp}");
+    foreach (var ev in tr.Events)
+    {
+        Console.WriteLine($"  event: {ev.Type}");
+        foreach (var a in ev.Attributes)
+            Console.WriteLine($"    {a.Key} = {a.Value}");
+    }
+}
+
+// ---------------- Config + utils ----------------
+
+static Dictionary<string, string> LoadConfig(string path)
+{
+    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var line in File.ReadAllLines(path))
+    {
+        var t = line.Trim();
+        if (t.Length == 0 || t.StartsWith("#")) continue;
+
+        var idx = t.IndexOf('=');
+        if (idx <= 0) continue;
+
+        dict[t[..idx].Trim()] = t[(idx + 1)..].Trim();
+    }
+    return dict;
+}
+
+static string TruncateMiddle(string s, int maxLen)
+{
+    if (string.IsNullOrEmpty(s) || s.Length <= maxLen) return s;
+    var keep = (maxLen - 3) / 2;
+    return s[..keep] + "..." + s[^keep..];
+}
+
+// ======================================================================
+// TYPES
+// ======================================================================
+
+sealed class BalancesSummary
+{
+    public decimal? BankBalanceUnits { get; set; }
+    public decimal? SpendableBalanceUnits { get; set; }
+
+    public decimal? DelegatedUnits { get; set; }
+    public decimal? UnbondingUnits { get; set; }
+    public decimal? RedelegatingUnits { get; set; }
+
+    public decimal? GovDepositUnits { get; set; }
+
+    public bool IsVestingAccount { get; set; }
+    public decimal? VestingLockedUnits { get; set; }
+
+    public decimal? LockedTotalUnits { get; set; }
+}
+
+public sealed class LedgerRow
+{
+    public LedgerRow(DateTime timeUtc, string direction, string from, string to, decimal amountUnits, string txHash, decimal feeUnits, bool feeApplied)
+    {
+        TimeUtc = timeUtc;
+        Direction = direction;
+        From = from;
+        To = to;
+        AmountInDenomUnits = amountUnits;
+        TxHash = txHash;
+        FeeInDenomUnits = feeUnits;
+        FeeApplied = feeApplied;
+        Memo = "";
+    }
+
+    public DateTime TimeUtc { get; set; }
+    public string Direction { get; set; }
+    public string From { get; set; }
+    public string To { get; set; }
+    public decimal AmountInDenomUnits { get; set; }
+    public string TxHash { get; set; }
+    public decimal FeeInDenomUnits { get; set; }
+    public bool FeeApplied { get; set; }
+    public string Memo { get; set; }
+}

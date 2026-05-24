@@ -1,0 +1,31 @@
+PROMPT: Generate Daily Historical Price CSV from Chart Image (2025)
+
+You are given a price chart image (CoinMarketCap-style) covering March–December 2025.
+
+Task:
+Reconstruct an estimated daily historical pricing dataset for calendar year 2025, based solely on the visual chart.
+
+Requirements:
+Output a CSV file.
+Include the following columns:
+date (YYYY-MM-DD)
+price_usd (estimated from chart)
+volume_usd_est (relative estimate inferred from volume bars)
+
+Generate daily rows from 2025-03-01 through 2025-12-31.
+Use monthly anchor points inferred from the chart, then:
+Interpolate daily prices using time-based linear interpolation
+Interpolate volume the same way
+Do not fabricate pre-March data unless explicitly instructed.
+Clearly treat all values as estimated, not authoritative market data.
+Export the final dataset as a downloadable .csv file.
+
+Implementation constraints (if code is used):
+Use Python
+Use pandas
+No external APIs or internet access
+Do not specify colors or charts
+
+Output:
+Provide a download link to the CSV
+Briefly explain assumptions and interpolation method

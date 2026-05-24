@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- OPTIC Favicon - Optimized for 16x16, 32x32, 64x64 display -->
+  <!-- Works in dark and light modes with high contrast -->
+  
+  <!-- Clean, minimal design that scales to smallest favicon sizes -->
+  
+  <!-- Outer hexagonal frame -->
+  <polygon points="128,24 204,64 204,192 128,232 52,192 52,64" 
+           fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round"/>
+  
+  <!-- Six-segment aperture -->
+  <g id="aperture" fill="#10b981">
+    <!-- Alternating opacity creates visual depth -->
+    <path d="M 128 50 L 165 85 L 165 110 L 128 80 Z" opacity="0.25"/>
+    <path d="M 165 85 L 195 110 L 195 145 L 165 110 Z" opacity="0.4"/>
+    <path d="M 165 145 L 195 170 L 165 195 L 128 170 Z" opacity="0.25"/>
+    <path d="M 128 180 L 91 195 L 91 170 L 128 195 Z" opacity="0.4"/>
+    <path d="M 91 145 L 61 170 L 61 135 L 91 110 Z" opacity="0.25"/>
+    <path d="M 91 85 L 61 110 L 91 135 L 128 110 Z" opacity="0.4"/>
+  </g>
+  
+  <!-- Central observation point - the "eye" -->
+  <circle cx="128" cy="128" r="28" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="128" cy="128" r="18" fill="none" stroke="#10b981" stroke-width="1.5" opacity="0.7"/>
+  <circle cx="128" cy="128" r="8" fill="#10b981"/>
+  
+  <!-- Data convergence - cardinal directions -->
+  <line x1="128" y1="40" x2="128" y2="60" stroke="#10b981" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+  <line x1="128" y1="196" x2="128" y2="216" stroke="#10b981" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+  <line x1="40" y1="128" x2="60" y2="128" stroke="#10b981" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+  <line x1="196" y1="128" x2="216" y2="128" stroke="#10b981" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+</svg>

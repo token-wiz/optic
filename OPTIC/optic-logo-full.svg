@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="600" height="200">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&display=swap');
+      .optic-text {
+        font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 72px;
+        font-weight: 700;
+        letter-spacing: -1px;
+        fill: #0a0e27;
+      }
+      .optic-text-light {
+        fill: #e4e6eb;
+      }
+    </style>
+  </defs>
+  
+  <!-- Icon portion (left side) -->
+  <g id="logo-icon">
+    <!-- Outer hexagonal frame -->
+    <polygon points="100,40 145,70 145,140 100,170 55,140 55,70" 
+             fill="none" stroke="#10b981" stroke-width="1.5" opacity="0.3"/>
+    
+    <!-- Primary aperture segments -->
+    <g id="aperture">
+      <path d="M 100 55 L 130 80 L 130 100 L 100 75 Z" fill="#10b981" opacity="0.25"/>
+      <path d="M 130 80 L 155 100 L 155 130 L 130 100 Z" fill="#10b981" opacity="0.35"/>
+      <path d="M 130 130 L 155 150 L 130 170 L 100 150 Z" fill="#10b981" opacity="0.25"/>
+      <path d="M 100 160 L 70 170 L 70 145 L 100 165 Z" fill="#10b981" opacity="0.35"/>
+      <path d="M 70 130 L 45 150 L 45 110 L 70 100 Z" fill="#10b981" opacity="0.25"/>
+      <path d="M 70 80 L 45 100 L 70 120 L 100 100 Z" fill="#10b981" opacity="0.35"/>
+    </g>
+    
+    <!-- Central observation point -->
+    <circle cx="100" cy="110" r="20" fill="none" stroke="#10b981" stroke-width="2"/>
+    <circle cx="100" cy="110" r="12" fill="none" stroke="#10b981" stroke-width="1.2" opacity="0.7"/>
+    <circle cx="100" cy="110" r="5" fill="#10b981"/>
+    
+    <!-- Convergence lines -->
+    <line x1="100" y1="30" x2="100" y2="45" stroke="#10b981" stroke-width="1.2" opacity="0.6"/>
+    <line x1="100" y1="175" x2="100" y2="190" stroke="#10b981" stroke-width="1.2" opacity="0.6"/>
+    <line x1="30" y1="110" x2="45" y2="110" stroke="#10b981" stroke-width="1.2" opacity="0.6"/>
+    <line x1="155" y1="110" x2="170" y2="110" stroke="#10b981" stroke-width="1.2" opacity="0.6"/>
+  </g>
+  
+  <!-- Text portion (right side) -->
+  <text x="200" y="130" class="optic-text">OPTIC</text>
+  
+  <!-- Accent line under text -->
+  <line x1="200" y1="145" x2="390" y2="145" stroke="#10b981" stroke-width="2.5" opacity="0.8"/>
+</svg>

@@ -1,0 +1,1156 @@
+OPTIC - Optio Protocol Telemetry & Intelligence Center
+Address ledger (sent/recv, from/to, amount, fee, running balance)
+
+CWD:          C:\workspace\OPTIC\OPTIC
+Config path:  C:\workspace\optic\optic\optic.conf
+Config exists:True
+
+OPTIC - Daily Stats Backfill (Block Scanner)
+Local data sync initialized at: C:\workspace\OPTIC\OPTIC\odata\optic.db
+Scanning blocks from RPC node...
+LCD endpoint not available, trying RPC endpoint...
+Latest block height: 588561
+Starting block scan from block 0...
+
+Γ£ô 2024-11-05 | Blocks: 0 - 1 | Wallets: ? | Active: ? | Txs: ?
+
+  2024-12-15 | Blocks: 2 - 100 | Wallets: 166 | Txs: 33          
+  2024-12-15 | Blocks: 2 - 200 | Wallets: 166 | Txs: 33          
+  2024-12-15 | Blocks: 2 - 300 | Wallets: 182 | Txs: 70          
+  2024-12-15 | Blocks: 2 - 400 | Wallets: 200 | Txs: 121          
+  2024-12-15 | Blocks: 2 - 500 | Wallets: 200 | Txs: 121          
+  2024-12-15 | Blocks: 2 - 600 | Wallets: 213 | Txs: 132          
+  2024-12-15 | Blocks: 2 - 700 | Wallets: 230 | Txs: 151          
+  2024-12-15 | Blocks: 2 - 800 | Wallets: 240 | Txs: 169          
+  2024-12-15 | Blocks: 2 - 900 | Wallets: 240 | Txs: 169          
+  2024-12-15 | Blocks: 2 - 1,000 | Wallets: 240 | Txs: 169          Γ£ô 2024-12-15 | Blocks: 2 - 1,062 | Wallets: 240 | Active: 120 | Txs: 169
+
+  2024-12-16 | Blocks: 1,063 - 1,100 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,200 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,300 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,400 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,500 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,600 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,700 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,800 | Wallets: 0 | Txs: 0          
+  2024-12-16 | Blocks: 1,063 - 1,900 | Wallets: 297 | Txs: 495          
+  2024-12-16 | Blocks: 1,063 - 2,000 | Wallets: 297 | Txs: 495          
+  2024-12-16 | Blocks: 1,063 - 2,100 | Wallets: 297 | Txs: 495          
+  2024-12-16 | Blocks: 1,063 - 2,200 | Wallets: 297 | Txs: 495          
+  2024-12-16 | Blocks: 1,063 - 2,300 | Wallets: 297 | Txs: 495          
+  2024-12-16 | Blocks: 1,063 - 2,400 | Wallets: 297 | Txs: 495          Γ£ô 2024-12-16 | Blocks: 1,063 - 2,478 | Wallets: 297 | Active: 148 | Txs: 495
+
+  2024-12-17 | Blocks: 2,479 - 2,500 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 2,600 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 2,700 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 2,800 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 2,900 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,000 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,100 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,200 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,300 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,400 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,500 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,600 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,700 | Wallets: 0 | Txs: 0          
+  2024-12-17 | Blocks: 2,479 - 3,800 | Wallets: 25 | Txs: 8          Γ£ô 2024-12-17 | Blocks: 2,479 - 3,895 | Wallets: 302 | Active: 151 | Txs: 104
+
+  2024-12-18 | Blocks: 3,896 - 3,900 | Wallets: 0 | Txs: 0          
+  2024-12-18 | Blocks: 3,896 - 4,000 | Wallets: 318 | Txs: 333          
+  2024-12-18 | Blocks: 3,896 - 4,100 | Wallets: 318 | Txs: 333          
+  2024-12-18 | Blocks: 3,896 - 4,200 | Wallets: 318 | Txs: 333          
+  2024-12-18 | Blocks: 3,896 - 4,300 | Wallets: 318 | Txs: 333          
+  2024-12-18 | Blocks: 3,896 - 4,400 | Wallets: 330 | Txs: 576          
+  2024-12-18 | Blocks: 3,896 - 4,500 | Wallets: 354 | Txs: 1,255          
+  2024-12-18 | Blocks: 3,896 - 4,600 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 4,700 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 4,800 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 4,900 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 5,000 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 5,100 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 5,200 | Wallets: 362 | Txs: 1,631          
+  2024-12-18 | Blocks: 3,896 - 5,300 | Wallets: 362 | Txs: 1,631          Γ£ô 2024-12-18 | Blocks: 3,896 - 5,311 | Wallets: 362 | Active: 181 | Txs: 1,631
+
+  2024-12-19 | Blocks: 5,312 - 5,400 | Wallets: 0 | Txs: 0          
+  2024-12-19 | Blocks: 5,312 - 5,500 | Wallets: 0 | Txs: 0          
+  2024-12-19 | Blocks: 5,312 - 5,600 | Wallets: 0 | Txs: 0          
+  2024-12-19 | Blocks: 5,312 - 5,700 | Wallets: 0 | Txs: 0          
+  2024-12-19 | Blocks: 5,312 - 5,800 | Wallets: 0 | Txs: 0          
+  2024-12-19 | Blocks: 5,312 - 5,900 | Wallets: 0 | Txs: 0          
+  2024-12-19 | Blocks: 5,312 - 6,000 | Wallets: 398 | Txs: 509          
+  2024-12-19 | Blocks: 5,312 - 6,100 | Wallets: 399 | Txs: 512          
+  2024-12-19 | Blocks: 5,312 - 6,200 | Wallets: 399 | Txs: 512          
+  2024-12-19 | Blocks: 5,312 - 6,300 | Wallets: 399 | Txs: 512          
+  2024-12-19 | Blocks: 5,312 - 6,400 | Wallets: 399 | Txs: 512          
+  2024-12-19 | Blocks: 5,312 - 6,500 | Wallets: 399 | Txs: 512          
+  2024-12-19 | Blocks: 5,312 - 6,600 | Wallets: 399 | Txs: 512          
+  2024-12-19 | Blocks: 5,312 - 6,700 | Wallets: 399 | Txs: 512          Γ£ô 2024-12-19 | Blocks: 5,312 - 6,728 | Wallets: 399 | Active: 199 | Txs: 512
+
+  2024-12-20 | Blocks: 6,729 - 6,800 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 6,900 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 7,000 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 7,100 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 7,200 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 7,300 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 7,400 | Wallets: 0 | Txs: 0          
+  2024-12-20 | Blocks: 6,729 - 7,500 | Wallets: 398 | Txs: 128          
+  2024-12-20 | Blocks: 6,729 - 7,600 | Wallets: 494 | Txs: 960          
+  2024-12-20 | Blocks: 6,729 - 7,700 | Wallets: 546 | Txs: 1,274          
+  2024-12-20 | Blocks: 6,729 - 7,800 | Wallets: 546 | Txs: 1,274          
+  2024-12-20 | Blocks: 6,729 - 7,900 | Wallets: 557 | Txs: 1,466          
+  2024-12-20 | Blocks: 6,729 - 8,000 | Wallets: 702 | Txs: 2,938          
+  2024-12-20 | Blocks: 6,729 - 8,100 | Wallets: 745 | Txs: 2,989          Γ£ô 2024-12-20 | Blocks: 6,729 - 8,144 | Wallets: 741 | Active: 370 | Txs: 2,989
+
+  2024-12-21 | Blocks: 8,145 - 8,200 | Wallets: 0 | Txs: 0          
+  2024-12-21 | Blocks: 8,145 - 8,300 | Wallets: 0 | Txs: 0          
+  2024-12-21 | Blocks: 8,145 - 8,400 | Wallets: 0 | Txs: 0          
+  2024-12-21 | Blocks: 8,145 - 8,500 | Wallets: 0 | Txs: 0          
+  2024-12-21 | Blocks: 8,145 - 8,600 | Wallets: 0 | Txs: 0          
+  2024-12-21 | Blocks: 8,145 - 8,700 | Wallets: 0 | Txs: 0          
+  2024-12-21 | Blocks: 8,145 - 8,800 | Wallets: 684 | Txs: 325          
+  2024-12-21 | Blocks: 8,145 - 8,900 | Wallets: 762 | Txs: 1,993          
+  2024-12-21 | Blocks: 8,145 - 9,000 | Wallets: 762 | Txs: 2,169          
+  2024-12-21 | Blocks: 8,145 - 9,100 | Wallets: 762 | Txs: 2,169          
+  2024-12-21 | Blocks: 8,145 - 9,200 | Wallets: 762 | Txs: 2,169          
+  2024-12-21 | Blocks: 8,145 - 9,300 | Wallets: 762 | Txs: 2,169          
+  2024-12-21 | Blocks: 8,145 - 9,400 | Wallets: 762 | Txs: 2,169          
+  2024-12-21 | Blocks: 8,145 - 9,500 | Wallets: 763 | Txs: 2,170          Γ£ô 2024-12-21 | Blocks: 8,145 - 9,560 | Wallets: 762 | Active: 381 | Txs: 2,170
+
+  2024-12-22 | Blocks: 9,561 - 9,600 | Wallets: 0 | Txs: 0          
+  2024-12-22 | Blocks: 9,561 - 9,700 | Wallets: 0 | Txs: 0          
+  2024-12-22 | Blocks: 9,561 - 9,800 | Wallets: 0 | Txs: 0          
+  2024-12-22 | Blocks: 9,561 - 9,900 | Wallets: 0 | Txs: 0          
+  2024-12-22 | Blocks: 9,561 - 10,000 | Wallets: 0 | Txs: 0          
+  2024-12-22 | Blocks: 9,561 - 10,100 | Wallets: 0 | Txs: 0          
+  2024-12-22 | Blocks: 9,561 - 10,200 | Wallets: 4 | Txs: 3          
+  2024-12-22 | Blocks: 9,561 - 10,300 | Wallets: 4 | Txs: 3          
+  2024-12-22 | Blocks: 9,561 - 10,400 | Wallets: 5 | Txs: 4          
+  2024-12-22 | Blocks: 9,561 - 10,500 | Wallets: 8 | Txs: 6          
+  2024-12-22 | Blocks: 9,561 - 10,600 | Wallets: 8 | Txs: 6          
+  2024-12-22 | Blocks: 9,561 - 10,700 | Wallets: 8 | Txs: 6          
+  2024-12-22 | Blocks: 9,561 - 10,800 | Wallets: 8 | Txs: 6          
+  2024-12-22 | Blocks: 9,561 - 10,900 | Wallets: 9 | Txs: 7          Γ£ô 2024-12-22 | Blocks: 9,561 - 10,977 | Wallets: 9 | Active: 4 | Txs: 7
+
+  2024-12-23 | Blocks: 10,978 - 11,000 | Wallets: 0 | Txs: 0          
+  2024-12-23 | Blocks: 10,978 - 11,100 | Wallets: 0 | Txs: 0          
+  2024-12-23 | Blocks: 10,978 - 11,200 | Wallets: 0 | Txs: 0          
+  2024-12-23 | Blocks: 10,978 - 11,300 | Wallets: 0 | Txs: 0          
+  2024-12-23 | Blocks: 10,978 - 11,400 | Wallets: 0 | Txs: 0          
+  2024-12-23 | Blocks: 10,978 - 11,500 | Wallets: 0 | Txs: 0          
+  2024-12-23 | Blocks: 10,978 - 11,600 | Wallets: 2 | Txs: 1          
+  2024-12-23 | Blocks: 10,978 - 11,700 | Wallets: 2 | Txs: 1          
+  2024-12-23 | Blocks: 10,978 - 11,800 | Wallets: 2 | Txs: 1          
+  2024-12-23 | Blocks: 10,978 - 11,900 | Wallets: 4 | Txs: 2          
+  2024-12-23 | Blocks: 10,978 - 12,000 | Wallets: 6 | Txs: 3          
+  2024-12-23 | Blocks: 10,978 - 12,100 | Wallets: 7 | Txs: 4          
+  2024-12-23 | Blocks: 10,978 - 12,200 | Wallets: 7 | Txs: 4          
+  2024-12-23 | Blocks: 10,978 - 12,300 | Wallets: 7 | Txs: 4          Γ£ô 2024-12-23 | Blocks: 10,978 - 12,393 | Wallets: 7 | Active: 3 | Txs: 4
+
+  2024-12-24 | Blocks: 12,394 - 12,400 | Wallets: 0 | Txs: 0          
+  2024-12-24 | Blocks: 12,394 - 12,500 | Wallets: 0 | Txs: 0          
+  2024-12-24 | Blocks: 12,394 - 12,600 | Wallets: 0 | Txs: 0          
+  2024-12-24 | Blocks: 12,394 - 12,700 | Wallets: 0 | Txs: 0          
+  2024-12-24 | Blocks: 12,394 - 12,800 | Wallets: 0 | Txs: 0          
+  2024-12-24 | Blocks: 12,394 - 12,900 | Wallets: 0 | Txs: 0          
+  2024-12-24 | Blocks: 12,394 - 13,000 | Wallets: 2 | Txs: 1          
+  2024-12-24 | Blocks: 12,394 - 13,100 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,200 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,300 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,400 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,500 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,600 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,700 | Wallets: 3 | Txs: 2          
+  2024-12-24 | Blocks: 12,394 - 13,800 | Wallets: 3 | Txs: 2          Γ£ô 2024-12-24 | Blocks: 12,394 - 13,810 | Wallets: 3 | Active: 1 | Txs: 2
+
+  2024-12-25 | Blocks: 13,811 - 13,900 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,000 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,100 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,200 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,300 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,400 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,500 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,600 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,700 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,800 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 14,900 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 15,000 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 15,100 | Wallets: 2 | Txs: 1          
+  2024-12-25 | Blocks: 13,811 - 15,200 | Wallets: 2 | Txs: 1          Γ£ô 2024-12-25 | Blocks: 13,811 - 15,226 | Wallets: 2 | Active: 1 | Txs: 1
+
+  2024-12-26 | Blocks: 15,227 - 15,300 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 15,400 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 15,500 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 15,600 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 15,700 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 15,800 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 15,900 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,000 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,100 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,200 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,300 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,400 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,500 | Wallets: 0 | Txs: 0          
+  2024-12-26 | Blocks: 15,227 - 16,600 | Wallets: 0 | Txs: 0          Γ£ô 2024-12-26 | Blocks: 15,227 - 16,642 | Wallets: ? | Active: ? | Txs: ?
+
+  2024-12-27 | Blocks: 16,643 - 16,700 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 16,800 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 16,900 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,000 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,100 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,200 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,300 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,400 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,500 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,600 | Wallets: 0 | Txs: 0          
+  2024-12-27 | Blocks: 16,643 - 17,700 | Wallets: 2 | Txs: 1          
+  2024-12-27 | Blocks: 16,643 - 17,800 | Wallets: 2 | Txs: 1          
+  2024-12-27 | Blocks: 16,643 - 17,900 | Wallets: 2 | Txs: 1          
+  2024-12-27 | Blocks: 16,643 - 18,000 | Wallets: 2 | Txs: 1          Γ£ô 2024-12-27 | Blocks: 16,643 - 18,059 | Wallets: 2 | Active: 1 | Txs: 1
+
+  2024-12-28 | Blocks: 18,060 - 18,100 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,200 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,300 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,400 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,500 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,600 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,700 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,800 | Wallets: 0 | Txs: 0          
+  2024-12-28 | Blocks: 18,060 - 18,900 | Wallets: 8 | Txs: 1          
+  2024-12-28 | Blocks: 18,060 - 19,000 | Wallets: 8 | Txs: 1          
+  2024-12-28 | Blocks: 18,060 - 19,100 | Wallets: 15 | Txs: 7          
+  2024-12-28 | Blocks: 18,060 - 19,200 | Wallets: 15 | Txs: 7          
+  2024-12-28 | Blocks: 18,060 - 19,300 | Wallets: 25 | Txs: 272          
+  2024-12-28 | Blocks: 18,060 - 19,400 | Wallets: 628 | Txs: 510          Γ£ô 2024-12-28 | Blocks: 18,060 - 19,475 | Wallets: 826 | Active: 413 | Txs: 818
+
+  2024-12-29 | Blocks: 19,476 - 19,500 | Wallets: 0 | Txs: 0          
+  2024-12-29 | Blocks: 19,476 - 19,600 | Wallets: 828 | Txs: 146          
+  2024-12-29 | Blocks: 19,476 - 19,700 | Wallets: 862 | Txs: 696          
+  2024-12-29 | Blocks: 19,476 - 19,800 | Wallets: 862 | Txs: 696          
+  2024-12-29 | Blocks: 19,476 - 19,900 | Wallets: 862 | Txs: 696          
+  2024-12-29 | Blocks: 19,476 - 20,000 | Wallets: 862 | Txs: 696          
+  2024-12-29 | Blocks: 19,476 - 20,100 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,200 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,300 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,400 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,500 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,600 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,700 | Wallets: 865 | Txs: 699          
+  2024-12-29 | Blocks: 19,476 - 20,800 | Wallets: 865 | Txs: 699          Γ£ô 2024-12-29 | Blocks: 19,476 - 20,891 | Wallets: 866 | Active: 433 | Txs: 700
+
+  2024-12-30 | Blocks: 20,892 - 20,900 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,000 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,100 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,200 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,300 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,400 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,500 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,600 | Wallets: 0 | Txs: 0          
+  2024-12-30 | Blocks: 20,892 - 21,700 | Wallets: 862 | Txs: 150          
+  2024-12-30 | Blocks: 20,892 - 21,800 | Wallets: 862 | Txs: 150          
+  2024-12-30 | Blocks: 20,892 - 21,900 | Wallets: 862 | Txs: 150          
+  2024-12-30 | Blocks: 20,892 - 22,000 | Wallets: 862 | Txs: 150          
+  2024-12-30 | Blocks: 20,892 - 22,100 | Wallets: 862 | Txs: 150          
+  2024-12-30 | Blocks: 20,892 - 22,200 | Wallets: 862 | Txs: 150          
+  2024-12-30 | Blocks: 20,892 - 22,300 | Wallets: 862 | Txs: 150          Γ£ô 2024-12-30 | Blocks: 20,892 - 22,307 | Wallets: 862 | Active: 431 | Txs: 150
+
+  2024-12-31 | Blocks: 22,308 - 22,400 | Wallets: 0 | Txs: 0          
+  2024-12-31 | Blocks: 22,308 - 22,500 | Wallets: 0 | Txs: 0          
+  2024-12-31 | Blocks: 22,308 - 22,600 | Wallets: 0 | Txs: 0          
+  2024-12-31 | Blocks: 22,308 - 22,700 | Wallets: 0 | Txs: 0          
+  2024-12-31 | Blocks: 22,308 - 22,800 | Wallets: 0 | Txs: 0          
+  2024-12-31 | Blocks: 22,308 - 22,900 | Wallets: 644 | Txs: 105          
+  2024-12-31 | Blocks: 22,308 - 23,000 | Wallets: 860 | Txs: 141          
+  2024-12-31 | Blocks: 22,308 - 23,100 | Wallets: 860 | Txs: 141          
+  2024-12-31 | Blocks: 22,308 - 23,200 | Wallets: 860 | Txs: 141          
+  2024-12-31 | Blocks: 22,308 - 23,300 | Wallets: 860 | Txs: 141          
+  2024-12-31 | Blocks: 22,308 - 23,400 | Wallets: 860 | Txs: 141          
+  2024-12-31 | Blocks: 22,308 - 23,500 | Wallets: 860 | Txs: 143          
+  2024-12-31 | Blocks: 22,308 - 23,600 | Wallets: 860 | Txs: 143          
+  2024-12-31 | Blocks: 22,308 - 23,700 | Wallets: 860 | Txs: 143          Γ£ô 2024-12-31 | Blocks: 22,308 - 23,724 | Wallets: 860 | Active: 430 | Txs: 143
+
+  2025-01-01 | Blocks: 23,725 - 23,800 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 23,900 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,000 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,100 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,200 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,300 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,400 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,500 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,600 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,700 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,800 | Wallets: 0 | Txs: 0          
+  2025-01-01 | Blocks: 23,725 - 24,900 | Wallets: 863 | Txs: 143          
+  2025-01-01 | Blocks: 23,725 - 25,000 | Wallets: 863 | Txs: 143          
+  2025-01-01 | Blocks: 23,725 - 25,100 | Wallets: 863 | Txs: 143          Γ£ô 2025-01-01 | Blocks: 23,725 - 25,140 | Wallets: 863 | Active: 431 | Txs: 143
+
+  2025-01-02 | Blocks: 25,141 - 25,200 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,300 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,400 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,500 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,600 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,700 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,800 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 25,900 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 26,000 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 26,100 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 26,200 | Wallets: 0 | Txs: 0          
+  2025-01-02 | Blocks: 25,141 - 26,300 | Wallets: 869 | Txs: 143          
+  2025-01-02 | Blocks: 25,141 - 26,400 | Wallets: 869 | Txs: 152          
+  2025-01-02 | Blocks: 25,141 - 26,500 | Wallets: 869 | Txs: 154          Γ£ô 2025-01-02 | Blocks: 25,141 - 26,556 | Wallets: 869 | Active: 434 | Txs: 154
+
+  2025-01-03 | Blocks: 26,557 - 26,600 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 26,700 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 26,800 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 26,900 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 27,000 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 27,100 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 27,200 | Wallets: 0 | Txs: 0          
+  2025-01-03 | Blocks: 26,557 - 27,300 | Wallets: 2 | Txs: 1          
+  2025-01-03 | Blocks: 26,557 - 27,400 | Wallets: 2 | Txs: 1          
+  2025-01-03 | Blocks: 26,557 - 27,500 | Wallets: 2 | Txs: 1          
+  2025-01-03 | Blocks: 26,557 - 27,600 | Wallets: 2 | Txs: 1          
+  2025-01-03 | Blocks: 26,557 - 27,700 | Wallets: 883 | Txs: 143          
+  2025-01-03 | Blocks: 26,557 - 27,800 | Wallets: 883 | Txs: 143          
+  2025-01-03 | Blocks: 26,557 - 27,900 | Wallets: 883 | Txs: 143          Γ£ô 2025-01-03 | Blocks: 26,557 - 27,973 | Wallets: 883 | Active: 441 | Txs: 143
+
+  2025-01-04 | Blocks: 27,974 - 28,000 | Wallets: 0 | Txs: 0          
+  2025-01-04 | Blocks: 27,974 - 28,100 | Wallets: 0 | Txs: 0          
+  2025-01-04 | Blocks: 27,974 - 28,200 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,300 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,400 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,500 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,600 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,700 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,800 | Wallets: 2 | Txs: 1          
+  2025-01-04 | Blocks: 27,974 - 28,900 | Wallets: 885 | Txs: 143          
+  2025-01-04 | Blocks: 27,974 - 29,000 | Wallets: 905 | Txs: 330          
+  2025-01-04 | Blocks: 27,974 - 29,100 | Wallets: 905 | Txs: 330          
+  2025-01-04 | Blocks: 27,974 - 29,200 | Wallets: 905 | Txs: 331          
+  2025-01-04 | Blocks: 27,974 - 29,300 | Wallets: 905 | Txs: 331          Γ£ô 2025-01-04 | Blocks: 27,974 - 29,390 | Wallets: 905 | Active: 452 | Txs: 331
+
+  2025-01-05 | Blocks: 29,391 - 29,400 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 29,500 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 29,600 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 29,700 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 29,800 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 29,900 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 30,000 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 30,100 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 30,200 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 30,300 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 30,400 | Wallets: 0 | Txs: 0          
+  2025-01-05 | Blocks: 29,391 - 30,500 | Wallets: 908 | Txs: 160          
+  2025-01-05 | Blocks: 29,391 - 30,600 | Wallets: 908 | Txs: 160          
+  2025-01-05 | Blocks: 29,391 - 30,700 | Wallets: 908 | Txs: 160          
+  2025-01-05 | Blocks: 29,391 - 30,800 | Wallets: 908 | Txs: 161          Γ£ô 2025-01-05 | Blocks: 29,391 - 30,806 | Wallets: 908 | Active: 454 | Txs: 161
+
+  2025-01-06 | Blocks: 30,807 - 30,900 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,000 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,100 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,200 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,300 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,400 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,500 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,600 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,700 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,800 | Wallets: 1 | Txs: 1          
+  2025-01-06 | Blocks: 30,807 - 31,900 | Wallets: 907 | Txs: 151          
+  2025-01-06 | Blocks: 30,807 - 32,000 | Wallets: 907 | Txs: 151          
+  2025-01-06 | Blocks: 30,807 - 32,100 | Wallets: 907 | Txs: 151          
+  2025-01-06 | Blocks: 30,807 - 32,200 | Wallets: 907 | Txs: 151          Γ£ô 2025-01-06 | Blocks: 30,807 - 32,223 | Wallets: 907 | Active: 453 | Txs: 151
+
+  2025-01-07 | Blocks: 32,224 - 32,300 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 32,400 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 32,500 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 32,600 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 32,700 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 32,800 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 32,900 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 33,000 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 33,100 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 33,200 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 33,300 | Wallets: 0 | Txs: 0          
+  2025-01-07 | Blocks: 32,224 - 33,400 | Wallets: 905 | Txs: 143          
+  2025-01-07 | Blocks: 32,224 - 33,500 | Wallets: 905 | Txs: 143          
+  2025-01-07 | Blocks: 32,224 - 33,600 | Wallets: 905 | Txs: 143          Γ£ô 2025-01-07 | Blocks: 32,224 - 33,640 | Wallets: 905 | Active: 452 | Txs: 143
+
+  2025-01-08 | Blocks: 33,641 - 33,700 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 33,800 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 33,900 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 34,000 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 34,100 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 34,200 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 34,300 | Wallets: 0 | Txs: 0          
+  2025-01-08 | Blocks: 33,641 - 34,400 | Wallets: 1 | Txs: 1          
+  2025-01-08 | Blocks: 33,641 - 34,500 | Wallets: 2 | Txs: 2          
+  2025-01-08 | Blocks: 33,641 - 34,600 | Wallets: 903 | Txs: 99          
+  2025-01-08 | Blocks: 33,641 - 34,700 | Wallets: 903 | Txs: 99          
+  2025-01-08 | Blocks: 33,641 - 34,800 | Wallets: 903 | Txs: 99          
+  2025-01-08 | Blocks: 33,641 - 34,900 | Wallets: 903 | Txs: 99          
+  2025-01-08 | Blocks: 33,641 - 35,000 | Wallets: 903 | Txs: 99          Γ£ô 2025-01-08 | Blocks: 33,641 - 35,057 | Wallets: 903 | Active: 451 | Txs: 100
+
+  2025-01-09 | Blocks: 35,058 - 35,100 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,200 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,300 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,400 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,500 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,600 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,700 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,800 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 35,900 | Wallets: 0 | Txs: 0          
+  2025-01-09 | Blocks: 35,058 - 36,000 | Wallets: 36 | Txs: 4          
+  2025-01-09 | Blocks: 35,058 - 36,100 | Wallets: 902 | Txs: 108          
+  2025-01-09 | Blocks: 35,058 - 36,200 | Wallets: 902 | Txs: 109          
+  2025-01-09 | Blocks: 35,058 - 36,300 | Wallets: 902 | Txs: 109          
+  2025-01-09 | Blocks: 35,058 - 36,400 | Wallets: 902 | Txs: 109          Γ£ô 2025-01-09 | Blocks: 35,058 - 36,474 | Wallets: 902 | Active: 451 | Txs: 109
+
+  2025-01-10 | Blocks: 36,475 - 36,500 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 36,600 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 36,700 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 36,800 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 36,900 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 37,000 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 37,100 | Wallets: 0 | Txs: 0          
+  2025-01-10 | Blocks: 36,475 - 37,200 | Wallets: 4 | Txs: 4          
+  2025-01-10 | Blocks: 36,475 - 37,300 | Wallets: 4 | Txs: 4          
+  2025-01-10 | Blocks: 36,475 - 37,400 | Wallets: 5 | Txs: 5          
+  2025-01-10 | Blocks: 36,475 - 37,500 | Wallets: 5 | Txs: 5          
+  2025-01-10 | Blocks: 36,475 - 37,600 | Wallets: 902 | Txs: 108          
+  2025-01-10 | Blocks: 36,475 - 37,700 | Wallets: 902 | Txs: 108          
+  2025-01-10 | Blocks: 36,475 - 37,800 | Wallets: 902 | Txs: 108          Γ£ô 2025-01-10 | Blocks: 36,475 - 37,892 | Wallets: 902 | Active: 451 | Txs: 108
+
+  2025-01-11 | Blocks: 37,893 - 37,900 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,000 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,100 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,200 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,300 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,400 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,500 | Wallets: 0 | Txs: 0          
+  2025-01-11 | Blocks: 37,893 - 38,600 | Wallets: 5 | Txs: 6          
+  2025-01-11 | Blocks: 37,893 - 38,700 | Wallets: 6 | Txs: 7          
+  2025-01-11 | Blocks: 37,893 - 38,800 | Wallets: 8 | Txs: 8          
+  2025-01-11 | Blocks: 37,893 - 38,900 | Wallets: 9 | Txs: 9          
+  2025-01-11 | Blocks: 37,893 - 39,000 | Wallets: 10 | Txs: 10          
+  2025-01-11 | Blocks: 37,893 - 39,100 | Wallets: 902 | Txs: 84          
+  2025-01-11 | Blocks: 37,893 - 39,200 | Wallets: 902 | Txs: 84          
+  2025-01-11 | Blocks: 37,893 - 39,300 | Wallets: 902 | Txs: 85          Γ£ô 2025-01-11 | Blocks: 37,893 - 39,309 | Wallets: 902 | Active: 451 | Txs: 85
+
+  2025-01-12 | Blocks: 39,310 - 39,400 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 39,500 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 39,600 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 39,700 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 39,800 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 39,900 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 40,000 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 40,100 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 40,200 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 40,300 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 40,400 | Wallets: 0 | Txs: 0          
+  2025-01-12 | Blocks: 39,310 - 40,500 | Wallets: 2 | Txs: 2          
+  2025-01-12 | Blocks: 39,310 - 40,600 | Wallets: 901 | Txs: 100          
+  2025-01-12 | Blocks: 39,310 - 40,700 | Wallets: 902 | Txs: 102          Γ£ô 2025-01-12 | Blocks: 39,310 - 40,726 | Wallets: 902 | Active: 451 | Txs: 104
+
+  2025-01-13 | Blocks: 40,727 - 40,800 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 40,900 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 41,000 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 41,100 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 41,200 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 41,300 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 41,400 | Wallets: 0 | Txs: 0          
+  2025-01-13 | Blocks: 40,727 - 41,500 | Wallets: 2 | Txs: 1          
+  2025-01-13 | Blocks: 40,727 - 41,600 | Wallets: 938 | Txs: 454          
+  2025-01-13 | Blocks: 40,727 - 41,700 | Wallets: 938 | Txs: 454          
+  2025-01-13 | Blocks: 40,727 - 41,800 | Wallets: 938 | Txs: 454          
+  2025-01-13 | Blocks: 40,727 - 41,900 | Wallets: 940 | Txs: 466          
+  2025-01-13 | Blocks: 40,727 - 42,000 | Wallets: 940 | Txs: 469          
+  2025-01-13 | Blocks: 40,727 - 42,100 | Wallets: 940 | Txs: 470          Γ£ô 2025-01-13 | Blocks: 40,727 - 42,140 | Wallets: 940 | Active: 470 | Txs: 470
+
+  2025-01-14 | Blocks: 42,141 - 42,200 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,300 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,400 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,500 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,600 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,700 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,800 | Wallets: 2 | Txs: 2          
+  2025-01-14 | Blocks: 42,141 - 42,900 | Wallets: 5 | Txs: 5          
+  2025-01-14 | Blocks: 42,141 - 43,000 | Wallets: 8 | Txs: 8          
+  2025-01-14 | Blocks: 42,141 - 43,100 | Wallets: 9 | Txs: 9          
+  2025-01-14 | Blocks: 42,141 - 43,200 | Wallets: 14 | Txs: 16          
+  2025-01-14 | Blocks: 42,141 - 43,300 | Wallets: 939 | Txs: 188          
+  2025-01-14 | Blocks: 42,141 - 43,400 | Wallets: 939 | Txs: 193          
+  2025-01-14 | Blocks: 42,141 - 43,500 | Wallets: 939 | Txs: 196          Γ£ô 2025-01-14 | Blocks: 42,141 - 43,557 | Wallets: 939 | Active: 469 | Txs: 199
+
+  2025-01-15 | Blocks: 43,558 - 43,600 | Wallets: 0 | Txs: 0          
+  2025-01-15 | Blocks: 43,558 - 43,700 | Wallets: 0 | Txs: 0          
+  2025-01-15 | Blocks: 43,558 - 43,800 | Wallets: 3 | Txs: 3          
+  2025-01-15 | Blocks: 43,558 - 43,900 | Wallets: 3 | Txs: 3          
+  2025-01-15 | Blocks: 43,558 - 44,000 | Wallets: 3 | Txs: 3          
+  2025-01-15 | Blocks: 43,558 - 44,100 | Wallets: 3 | Txs: 3          
+  2025-01-15 | Blocks: 43,558 - 44,200 | Wallets: 3 | Txs: 3          
+  2025-01-15 | Blocks: 43,558 - 44,300 | Wallets: 4 | Txs: 4          
+  2025-01-15 | Blocks: 43,558 - 44,400 | Wallets: 4 | Txs: 4          
+  2025-01-15 | Blocks: 43,558 - 44,500 | Wallets: 4 | Txs: 4          
+  2025-01-15 | Blocks: 43,558 - 44,600 | Wallets: 924 | Txs: 159          
+  2025-01-15 | Blocks: 43,558 - 44,700 | Wallets: 924 | Txs: 159          
+  2025-01-15 | Blocks: 43,558 - 44,800 | Wallets: 924 | Txs: 161          
+  2025-01-15 | Blocks: 43,558 - 44,900 | Wallets: 924 | Txs: 163          Γ£ô 2025-01-15 | Blocks: 43,558 - 44,973 | Wallets: 924 | Active: 462 | Txs: 163
+
+  2025-01-16 | Blocks: 44,974 - 45,000 | Wallets: 0 | Txs: 0          
+  2025-01-16 | Blocks: 44,974 - 45,100 | Wallets: 1 | Txs: 5          
+  2025-01-16 | Blocks: 44,974 - 45,200 | Wallets: 3 | Txs: 6          
+  2025-01-16 | Blocks: 44,974 - 45,300 | Wallets: 3 | Txs: 6          
+  2025-01-16 | Blocks: 44,974 - 45,400 | Wallets: 3 | Txs: 6          
+  2025-01-16 | Blocks: 44,974 - 45,500 | Wallets: 3 | Txs: 6          
+  2025-01-16 | Blocks: 44,974 - 45,600 | Wallets: 3 | Txs: 6          
+  2025-01-16 | Blocks: 44,974 - 45,700 | Wallets: 944 | Txs: 175          
+  2025-01-16 | Blocks: 44,974 - 45,800 | Wallets: 944 | Txs: 175          
+  2025-01-16 | Blocks: 44,974 - 45,900 | Wallets: 944 | Txs: 175          
+  2025-01-16 | Blocks: 44,974 - 46,000 | Wallets: 944 | Txs: 176          
+  2025-01-16 | Blocks: 44,974 - 46,100 | Wallets: 944 | Txs: 178          
+  2025-01-16 | Blocks: 44,974 - 46,200 | Wallets: 944 | Txs: 180          
+  2025-01-16 | Blocks: 44,974 - 46,300 | Wallets: 945 | Txs: 184          Γ£ô 2025-01-16 | Blocks: 44,974 - 46,390 | Wallets: 945 | Active: 472 | Txs: 186
+
+  2025-01-17 | Blocks: 46,391 - 46,400 | Wallets: 0 | Txs: 0          
+  2025-01-17 | Blocks: 46,391 - 46,500 | Wallets: 1 | Txs: 1          
+  2025-01-17 | Blocks: 46,391 - 46,600 | Wallets: 1 | Txs: 1          
+  2025-01-17 | Blocks: 46,391 - 46,700 | Wallets: 1 | Txs: 1          
+  2025-01-17 | Blocks: 46,391 - 46,800 | Wallets: 1 | Txs: 1          
+  2025-01-17 | Blocks: 46,391 - 46,900 | Wallets: 1 | Txs: 1          
+  2025-01-17 | Blocks: 46,391 - 47,000 | Wallets: 2 | Txs: 4          
+  2025-01-17 | Blocks: 46,391 - 47,100 | Wallets: 2 | Txs: 4          
+  2025-01-17 | Blocks: 46,391 - 47,200 | Wallets: 5 | Txs: 8          
+  2025-01-17 | Blocks: 46,391 - 47,300 | Wallets: 12 | Txs: 15          
+  2025-01-17 | Blocks: 46,391 - 47,400 | Wallets: 16 | Txs: 19          
+  2025-01-17 | Blocks: 46,391 - 47,500 | Wallets: 18 | Txs: 21          
+  2025-01-17 | Blocks: 46,391 - 47,600 | Wallets: 939 | Txs: 183          
+  2025-01-17 | Blocks: 46,391 - 47,700 | Wallets: 939 | Txs: 189          
+  2025-01-17 | Blocks: 46,391 - 47,800 | Wallets: 939 | Txs: 190          Γ£ô 2025-01-17 | Blocks: 46,391 - 47,806 | Wallets: 939 | Active: 469 | Txs: 192
+
+  2025-01-18 | Blocks: 47,807 - 47,900 | Wallets: 1 | Txs: 1          
+  2025-01-18 | Blocks: 47,807 - 48,000 | Wallets: 1 | Txs: 1          
+  2025-01-18 | Blocks: 47,807 - 48,100 | Wallets: 1 | Txs: 1          
+  2025-01-18 | Blocks: 47,807 - 48,200 | Wallets: 4 | Txs: 4          
+  2025-01-18 | Blocks: 47,807 - 48,300 | Wallets: 4 | Txs: 4          
+  2025-01-18 | Blocks: 47,807 - 48,400 | Wallets: 5 | Txs: 5          
+  2025-01-18 | Blocks: 47,807 - 48,500 | Wallets: 938 | Txs: 108          
+  2025-01-18 | Blocks: 47,807 - 48,600 | Wallets: 938 | Txs: 110          
+  2025-01-18 | Blocks: 47,807 - 48,700 | Wallets: 938 | Txs: 111          
+  2025-01-18 | Blocks: 47,807 - 48,800 | Wallets: 940 | Txs: 116          
+  2025-01-18 | Blocks: 47,807 - 48,900 | Wallets: 940 | Txs: 119          
+  2025-01-18 | Blocks: 47,807 - 49,000 | Wallets: 940 | Txs: 121          
+  2025-01-18 | Blocks: 47,807 - 49,100 | Wallets: 940 | Txs: 123          
+  2025-01-18 | Blocks: 47,807 - 49,200 | Wallets: 940 | Txs: 123          Γ£ô 2025-01-18 | Blocks: 47,807 - 49,223 | Wallets: 940 | Active: 470 | Txs: 123
+
+  2025-01-19 | Blocks: 49,224 - 49,300 | Wallets: 1 | Txs: 1          
+  2025-01-19 | Blocks: 49,224 - 49,400 | Wallets: 2 | Txs: 2          
+  2025-01-19 | Blocks: 49,224 - 49,500 | Wallets: 2 | Txs: 2          
+  2025-01-19 | Blocks: 49,224 - 49,600 | Wallets: 3 | Txs: 3          
+  2025-01-19 | Blocks: 49,224 - 49,700 | Wallets: 3 | Txs: 3          
+  2025-01-19 | Blocks: 49,224 - 49,800 | Wallets: 5 | Txs: 6          
+  2025-01-19 | Blocks: 49,224 - 49,900 | Wallets: 6 | Txs: 8          
+  2025-01-19 | Blocks: 49,224 - 50,000 | Wallets: 7 | Txs: 9          
+  2025-01-19 | Blocks: 49,224 - 50,100 | Wallets: 933 | Txs: 146          
+  2025-01-19 | Blocks: 49,224 - 50,200 | Wallets: 933 | Txs: 146          
+  2025-01-19 | Blocks: 49,224 - 50,300 | Wallets: 933 | Txs: 146          
+  2025-01-19 | Blocks: 49,224 - 50,400 | Wallets: 933 | Txs: 147          
+  2025-01-19 | Blocks: 49,224 - 50,500 | Wallets: 933 | Txs: 148          
+  2025-01-19 | Blocks: 49,224 - 50,600 | Wallets: 933 | Txs: 149          Γ£ô 2025-01-19 | Blocks: 49,224 - 50,639 | Wallets: 933 | Active: 466 | Txs: 149
+
+  2025-01-20 | Blocks: 50,640 - 50,700 | Wallets: 2 | Txs: 1          
+  2025-01-20 | Blocks: 50,640 - 50,800 | Wallets: 3 | Txs: 3          
+  2025-01-20 | Blocks: 50,640 - 50,900 | Wallets: 3 | Txs: 3          
+  2025-01-20 | Blocks: 50,640 - 51,000 | Wallets: 3 | Txs: 3          
+  2025-01-20 | Blocks: 50,640 - 51,100 | Wallets: 4 | Txs: 8          
+  2025-01-20 | Blocks: 50,640 - 51,200 | Wallets: 4 | Txs: 8          
+  2025-01-20 | Blocks: 50,640 - 51,300 | Wallets: 6 | Txs: 10          
+  2025-01-20 | Blocks: 50,640 - 51,400 | Wallets: 10 | Txs: 13          
+  2025-01-20 | Blocks: 50,640 - 51,500 | Wallets: 14 | Txs: 17          
+  2025-01-20 | Blocks: 50,640 - 51,600 | Wallets: 935 | Txs: 148          
+  2025-01-20 | Blocks: 50,640 - 51,700 | Wallets: 935 | Txs: 148          
+  2025-01-20 | Blocks: 50,640 - 51,800 | Wallets: 935 | Txs: 152          
+  2025-01-20 | Blocks: 50,640 - 51,900 | Wallets: 935 | Txs: 154          
+  2025-01-20 | Blocks: 50,640 - 52,000 | Wallets: 935 | Txs: 158          Γ£ô 2025-01-20 | Blocks: 50,640 - 52,056 | Wallets: 935 | Active: 467 | Txs: 159
+
+  2025-01-21 | Blocks: 52,057 - 52,100 | Wallets: 0 | Txs: 0          
+  2025-01-21 | Blocks: 52,057 - 52,200 | Wallets: 0 | Txs: 0          
+  2025-01-21 | Blocks: 52,057 - 52,300 | Wallets: 0 | Txs: 0          
+  2025-01-21 | Blocks: 52,057 - 52,400 | Wallets: 0 | Txs: 0          
+  2025-01-21 | Blocks: 52,057 - 52,500 | Wallets: 0 | Txs: 0          
+  2025-01-21 | Blocks: 52,057 - 52,600 | Wallets: 1 | Txs: 1          
+  2025-01-21 | Blocks: 52,057 - 52,700 | Wallets: 3 | Txs: 4          
+  2025-01-21 | Blocks: 52,057 - 52,800 | Wallets: 5 | Txs: 6          
+  2025-01-21 | Blocks: 52,057 - 52,900 | Wallets: 6 | Txs: 7          
+  2025-01-21 | Blocks: 52,057 - 53,000 | Wallets: 7 | Txs: 8          
+  2025-01-21 | Blocks: 52,057 - 53,100 | Wallets: 932 | Txs: 84          
+  2025-01-21 | Blocks: 52,057 - 53,200 | Wallets: 932 | Txs: 85          
+  2025-01-21 | Blocks: 52,057 - 53,300 | Wallets: 932 | Txs: 90          
+  2025-01-21 | Blocks: 52,057 - 53,400 | Wallets: 935 | Txs: 100          Γ£ô 2025-01-21 | Blocks: 52,057 - 53,473 | Wallets: 935 | Active: 467 | Txs: 101
+
+  2025-01-22 | Blocks: 53,474 - 53,500 | Wallets: 0 | Txs: 0          
+  2025-01-22 | Blocks: 53,474 - 53,600 | Wallets: 1 | Txs: 6          
+  2025-01-22 | Blocks: 53,474 - 53,700 | Wallets: 1 | Txs: 6          
+  2025-01-22 | Blocks: 53,474 - 53,800 | Wallets: 1 | Txs: 6          
+  2025-01-22 | Blocks: 53,474 - 53,900 | Wallets: 2 | Txs: 7          
+  2025-01-22 | Blocks: 53,474 - 54,000 | Wallets: 2 | Txs: 7          
+  2025-01-22 | Blocks: 53,474 - 54,100 | Wallets: 4 | Txs: 8          
+  2025-01-22 | Blocks: 53,474 - 54,200 | Wallets: 6 | Txs: 10          
+  2025-01-22 | Blocks: 53,474 - 54,300 | Wallets: 9 | Txs: 12          
+  2025-01-22 | Blocks: 53,474 - 54,400 | Wallets: 10 | Txs: 13          
+  2025-01-22 | Blocks: 53,474 - 54,500 | Wallets: 10 | Txs: 13          
+  2025-01-22 | Blocks: 53,474 - 54,600 | Wallets: 10 | Txs: 13          
+  2025-01-22 | Blocks: 53,474 - 54,700 | Wallets: 932 | Txs: 166          
+  2025-01-22 | Blocks: 53,474 - 54,800 | Wallets: 932 | Txs: 169          Γ£ô 2025-01-22 | Blocks: 53,474 - 54,889 | Wallets: 932 | Active: 466 | Txs: 169
+
+  2025-01-23 | Blocks: 54,890 - 54,900 | Wallets: 0 | Txs: 0          
+  2025-01-23 | Blocks: 54,890 - 55,000 | Wallets: 2 | Txs: 2          
+  2025-01-23 | Blocks: 54,890 - 55,100 | Wallets: 2 | Txs: 2          
+  2025-01-23 | Blocks: 54,890 - 55,200 | Wallets: 2 | Txs: 2          
+  2025-01-23 | Blocks: 54,890 - 55,300 | Wallets: 2 | Txs: 2          
+  2025-01-23 | Blocks: 54,890 - 55,400 | Wallets: 2 | Txs: 2          
+  2025-01-23 | Blocks: 54,890 - 55,500 | Wallets: 2 | Txs: 2          
+  2025-01-23 | Blocks: 54,890 - 55,600 | Wallets: 927 | Txs: 152          
+  2025-01-23 | Blocks: 54,890 - 55,700 | Wallets: 927 | Txs: 154          
+  2025-01-23 | Blocks: 54,890 - 55,800 | Wallets: 927 | Txs: 156          
+  2025-01-23 | Blocks: 54,890 - 55,900 | Wallets: 927 | Txs: 158          
+  2025-01-23 | Blocks: 54,890 - 56,000 | Wallets: 927 | Txs: 158          
+  2025-01-23 | Blocks: 54,890 - 56,100 | Wallets: 928 | Txs: 163          
+  2025-01-23 | Blocks: 54,890 - 56,200 | Wallets: 929 | Txs: 169          
+  2025-01-23 | Blocks: 54,890 - 56,300 | Wallets: 929 | Txs: 170          Γ£ô 2025-01-23 | Blocks: 54,890 - 56,306 | Wallets: 929 | Active: 464 | Txs: 170
+
+  2025-01-24 | Blocks: 56,307 - 56,400 | Wallets: 1 | Txs: 1          
+  2025-01-24 | Blocks: 56,307 - 56,500 | Wallets: 4 | Txs: 9          
+  2025-01-24 | Blocks: 56,307 - 56,600 | Wallets: 4 | Txs: 9          
+  2025-01-24 | Blocks: 56,307 - 56,700 | Wallets: 5 | Txs: 18          
+  2025-01-24 | Blocks: 56,307 - 56,800 | Wallets: 5 | Txs: 21          
+  2025-01-24 | Blocks: 56,307 - 56,900 | Wallets: 6 | Txs: 22          
+  2025-01-24 | Blocks: 56,307 - 57,000 | Wallets: 17 | Txs: 31          
+  2025-01-24 | Blocks: 56,307 - 57,100 | Wallets: 22 | Txs: 44          
+  2025-01-24 | Blocks: 56,307 - 57,200 | Wallets: 28 | Txs: 51          
+  2025-01-24 | Blocks: 56,307 - 57,300 | Wallets: 34 | Txs: 57          
+  2025-01-24 | Blocks: 56,307 - 57,400 | Wallets: 39 | Txs: 62          
+  2025-01-24 | Blocks: 56,307 - 57,500 | Wallets: 42 | Txs: 72          
+  2025-01-24 | Blocks: 56,307 - 57,600 | Wallets: 43 | Txs: 73          
+  2025-01-24 | Blocks: 56,307 - 57,700 | Wallets: 45 | Txs: 74          Γ£ô 2025-01-24 | Blocks: 56,307 - 57,722 | Wallets: 45 | Active: 22 | Txs: 74
+
+  2025-01-25 | Blocks: 57,723 - 57,800 | Wallets: 926 | Txs: 155          
+  2025-01-25 | Blocks: 57,723 - 57,900 | Wallets: 926 | Txs: 156          
+  2025-01-25 | Blocks: 57,723 - 58,000 | Wallets: 926 | Txs: 156          
+  2025-01-25 | Blocks: 57,723 - 58,100 | Wallets: 926 | Txs: 156          
+  2025-01-25 | Blocks: 57,723 - 58,200 | Wallets: 926 | Txs: 156          
+  2025-01-25 | Blocks: 57,723 - 58,300 | Wallets: 926 | Txs: 157          
+  2025-01-25 | Blocks: 57,723 - 58,400 | Wallets: 926 | Txs: 158          
+  2025-01-25 | Blocks: 57,723 - 58,500 | Wallets: 926 | Txs: 159          
+  2025-01-25 | Blocks: 57,723 - 58,600 | Wallets: 928 | Txs: 161          
+  2025-01-25 | Blocks: 57,723 - 58,700 | Wallets: 929 | Txs: 163          
+  2025-01-25 | Blocks: 57,723 - 58,800 | Wallets: 929 | Txs: 163          
+  2025-01-25 | Blocks: 57,723 - 58,900 | Wallets: 929 | Txs: 275          
+  2025-01-25 | Blocks: 57,723 - 59,000 | Wallets: 930 | Txs: 277          
+  2025-01-25 | Blocks: 57,723 - 59,100 | Wallets: 930 | Txs: 278          Γ£ô 2025-01-25 | Blocks: 57,723 - 59,139 | Wallets: 930 | Active: 465 | Txs: 278
+
+  2025-01-26 | Blocks: 59,140 - 59,200 | Wallets: 1 | Txs: 1          
+  2025-01-26 | Blocks: 59,140 - 59,300 | Wallets: 1 | Txs: 1          
+  2025-01-26 | Blocks: 59,140 - 59,400 | Wallets: 1 | Txs: 1          
+  2025-01-26 | Blocks: 59,140 - 59,500 | Wallets: 1 | Txs: 1          
+  2025-01-26 | Blocks: 59,140 - 59,600 | Wallets: 1 | Txs: 1          
+  2025-01-26 | Blocks: 59,140 - 59,700 | Wallets: 1 | Txs: 1          
+  2025-01-26 | Blocks: 59,140 - 59,800 | Wallets: 2 | Txs: 2          
+  2025-01-26 | Blocks: 59,140 - 59,900 | Wallets: 923 | Txs: 161          
+  2025-01-26 | Blocks: 59,140 - 60,000 | Wallets: 1,012 | Txs: 875          
+  2025-01-26 | Blocks: 59,140 - 60,100 | Wallets: 1,012 | Txs: 877          
+  2025-01-26 | Blocks: 59,140 - 60,200 | Wallets: 1,012 | Txs: 877          
+  2025-01-26 | Blocks: 59,140 - 60,300 | Wallets: 1,012 | Txs: 877          
+  2025-01-26 | Blocks: 59,140 - 60,400 | Wallets: 1,012 | Txs: 877          
+  2025-01-26 | Blocks: 59,140 - 60,500 | Wallets: 1,012 | Txs: 877          Γ£ô 2025-01-26 | Blocks: 59,140 - 60,555 | Wallets: 1,012 | Active: 506 | Txs: 878
+
+  2025-01-27 | Blocks: 60,556 - 60,600 | Wallets: 0 | Txs: 0          
+  2025-01-27 | Blocks: 60,556 - 60,700 | Wallets: 0 | Txs: 0          
+  2025-01-27 | Blocks: 60,556 - 60,800 | Wallets: 0 | Txs: 0          
+  2025-01-27 | Blocks: 60,556 - 60,900 | Wallets: 0 | Txs: 0          
+  2025-01-27 | Blocks: 60,556 - 61,000 | Wallets: 0 | Txs: 0          
+  2025-01-27 | Blocks: 60,556 - 61,100 | Wallets: 0 | Txs: 0          
+  2025-01-27 | Blocks: 60,556 - 61,200 | Wallets: 1 | Txs: 1          
+  2025-01-27 | Blocks: 60,556 - 61,300 | Wallets: 1 | Txs: 1          
+  2025-01-27 | Blocks: 60,556 - 61,400 | Wallets: 3 | Txs: 3          
+  2025-01-27 | Blocks: 60,556 - 61,500 | Wallets: 5 | Txs: 5          
+  2025-01-27 | Blocks: 60,556 - 61,600 | Wallets: 8 | Txs: 10          
+  2025-01-27 | Blocks: 60,556 - 61,700 | Wallets: 9 | Txs: 11          
+  2025-01-27 | Blocks: 60,556 - 61,800 | Wallets: 10 | Txs: 12          
+  2025-01-27 | Blocks: 60,556 - 61,900 | Wallets: 11 | Txs: 14          Γ£ô 2025-01-27 | Blocks: 60,556 - 61,972 | Wallets: 11 | Active: 5 | Txs: 14
+
+  2025-01-28 | Blocks: 61,973 - 62,000 | Wallets: 1 | Txs: 1          
+  2025-01-28 | Blocks: 61,973 - 62,100 | Wallets: 1,017 | Txs: 138          
+  2025-01-28 | Blocks: 61,973 - 62,200 | Wallets: 1,017 | Txs: 138          
+  2025-01-28 | Blocks: 61,973 - 62,300 | Wallets: 1,017 | Txs: 138          
+  2025-01-28 | Blocks: 61,973 - 62,400 | Wallets: 1,017 | Txs: 138          
+  2025-01-28 | Blocks: 61,973 - 62,500 | Wallets: 1,017 | Txs: 139          
+  2025-01-28 | Blocks: 61,973 - 62,600 | Wallets: 1,017 | Txs: 139          
+  2025-01-28 | Blocks: 61,973 - 62,700 | Wallets: 1,019 | Txs: 142          
+  2025-01-28 | Blocks: 61,973 - 62,800 | Wallets: 1,019 | Txs: 142          
+  2025-01-28 | Blocks: 61,973 - 62,900 | Wallets: 1,019 | Txs: 142          
+  2025-01-28 | Blocks: 61,973 - 63,000 | Wallets: 1,019 | Txs: 144          
+  2025-01-28 | Blocks: 61,973 - 63,100 | Wallets: 1,019 | Txs: 144          
+  2025-01-28 | Blocks: 61,973 - 63,200 | Wallets: 1,028 | Txs: 272          
+  2025-01-28 | Blocks: 61,973 - 63,300 | Wallets: 1,028 | Txs: 274          Γ£ô 2025-01-28 | Blocks: 61,973 - 63,389 | Wallets: 1,028 | Active: 514 | Txs: 276
+
+  2025-01-29 | Blocks: 63,390 - 63,400 | Wallets: 0 | Txs: 0          
+  2025-01-29 | Blocks: 63,390 - 63,500 | Wallets: 2 | Txs: 1          
+  2025-01-29 | Blocks: 63,390 - 63,600 | Wallets: 2 | Txs: 1          
+  2025-01-29 | Blocks: 63,390 - 63,700 | Wallets: 3 | Txs: 2          
+  2025-01-29 | Blocks: 63,390 - 63,800 | Wallets: 3 | Txs: 2          
+  2025-01-29 | Blocks: 63,390 - 63,900 | Wallets: 4 | Txs: 3          
+  2025-01-29 | Blocks: 63,390 - 64,000 | Wallets: 4 | Txs: 3          
+  2025-01-29 | Blocks: 63,390 - 64,100 | Wallets: 4 | Txs: 3          
+  2025-01-29 | Blocks: 63,390 - 64,200 | Wallets: 4 | Txs: 3          
+  2025-01-29 | Blocks: 63,390 - 64,300 | Wallets: 1,021 | Txs: 137          
+  2025-01-29 | Blocks: 63,390 - 64,400 | Wallets: 1,021 | Txs: 138          
+  2025-01-29 | Blocks: 63,390 - 64,500 | Wallets: 1,021 | Txs: 141          
+  2025-01-29 | Blocks: 63,390 - 64,600 | Wallets: 1,021 | Txs: 142          
+  2025-01-29 | Blocks: 63,390 - 64,700 | Wallets: 1,021 | Txs: 144          
+  2025-01-29 | Blocks: 63,390 - 64,800 | Wallets: 1,021 | Txs: 146          Γ£ô 2025-01-29 | Blocks: 63,390 - 64,805 | Wallets: 1,021 | Active: 510 | Txs: 146
+
+  2025-01-30 | Blocks: 64,806 - 64,900 | Wallets: 1 | Txs: 1          
+  2025-01-30 | Blocks: 64,806 - 65,000 | Wallets: 1 | Txs: 1          
+  2025-01-30 | Blocks: 64,806 - 65,100 | Wallets: 1 | Txs: 1          
+  2025-01-30 | Blocks: 64,806 - 65,200 | Wallets: 1 | Txs: 1          
+  2025-01-30 | Blocks: 64,806 - 65,300 | Wallets: 1 | Txs: 1          
+  2025-01-30 | Blocks: 64,806 - 65,400 | Wallets: 3 | Txs: 3          
+  2025-01-30 | Blocks: 64,806 - 65,500 | Wallets: 5 | Txs: 5          
+  2025-01-30 | Blocks: 64,806 - 65,600 | Wallets: 11 | Txs: 14          
+  2025-01-30 | Blocks: 64,806 - 65,700 | Wallets: 13 | Txs: 16          
+  2025-01-30 | Blocks: 64,806 - 65,800 | Wallets: 14 | Txs: 18          
+  2025-01-30 | Blocks: 64,806 - 65,900 | Wallets: 14 | Txs: 18          
+  2025-01-30 | Blocks: 64,806 - 66,000 | Wallets: 14 | Txs: 18          
+  2025-01-30 | Blocks: 64,806 - 66,100 | Wallets: 15 | Txs: 19          Γ£ô 2025-01-30 | Blocks: 64,806 - 66,188 | Wallets: 15 | Active: 7 | Txs: 19
+
+  2025-01-31 | Blocks: 66,189 - 66,200 | Wallets: 0 | Txs: 0          
+  2025-01-31 | Blocks: 66,189 - 66,300 | Wallets: 1 | Txs: 1          
+  2025-01-31 | Blocks: 66,189 - 66,400 | Wallets: 1 | Txs: 1          
+  2025-01-31 | Blocks: 66,189 - 66,500 | Wallets: 1 | Txs: 1          
+  2025-01-31 | Blocks: 66,189 - 66,600 | Wallets: 2 | Txs: 2          
+  2025-01-31 | Blocks: 66,189 - 66,700 | Wallets: 2 | Txs: 2          
+  2025-01-31 | Blocks: 66,189 - 66,800 | Wallets: 5 | Txs: 5          
+  2025-01-31 | Blocks: 66,189 - 66,900 | Wallets: 1,020 | Txs: 146          
+  2025-01-31 | Blocks: 66,189 - 67,000 | Wallets: 1,021 | Txs: 275          
+  2025-01-31 | Blocks: 66,189 - 67,100 | Wallets: 1,021 | Txs: 275          
+  2025-01-31 | Blocks: 66,189 - 67,200 | Wallets: 1,021 | Txs: 277          
+  2025-01-31 | Blocks: 66,189 - 67,300 | Wallets: 1,021 | Txs: 283          
+  2025-01-31 | Blocks: 66,189 - 67,400 | Wallets: 1,021 | Txs: 287          
+  2025-01-31 | Blocks: 66,189 - 67,500 | Wallets: 1,021 | Txs: 287          
+  2025-01-31 | Blocks: 66,189 - 67,600 | Wallets: 1,021 | Txs: 287          Γ£ô 2025-01-31 | Blocks: 66,189 - 67,605 | Wallets: 1,021 | Active: 510 | Txs: 287
+
+  2025-02-01 | Blocks: 67,606 - 67,700 | Wallets: 0 | Txs: 0          
+  2025-02-01 | Blocks: 67,606 - 67,800 | Wallets: 0 | Txs: 0          
+  2025-02-01 | Blocks: 67,606 - 67,900 | Wallets: 1 | Txs: 1          
+  2025-02-01 | Blocks: 67,606 - 68,000 | Wallets: 1 | Txs: 1          
+  2025-02-01 | Blocks: 67,606 - 68,100 | Wallets: 1 | Txs: 1          
+  2025-02-01 | Blocks: 67,606 - 68,200 | Wallets: 2 | Txs: 4          
+  2025-02-01 | Blocks: 67,606 - 68,300 | Wallets: 5 | Txs: 7          
+  2025-02-01 | Blocks: 67,606 - 68,400 | Wallets: 6 | Txs: 9          
+  2025-02-01 | Blocks: 67,606 - 68,500 | Wallets: 9 | Txs: 11          
+  2025-02-01 | Blocks: 67,606 - 68,600 | Wallets: 9 | Txs: 11          
+  2025-02-01 | Blocks: 67,606 - 68,700 | Wallets: 14 | Txs: 16          
+  2025-02-01 | Blocks: 67,606 - 68,800 | Wallets: 1,017 | Txs: 146          
+  2025-02-01 | Blocks: 67,606 - 68,900 | Wallets: 1,017 | Txs: 150          
+  2025-02-01 | Blocks: 67,606 - 69,000 | Wallets: 1,017 | Txs: 151          Γ£ô 2025-02-01 | Blocks: 67,606 - 69,022 | Wallets: 1,018 | Active: 509 | Txs: 153
+
+  2025-02-02 | Blocks: 69,023 - 69,100 | Wallets: 1 | Txs: 1          
+  2025-02-02 | Blocks: 69,023 - 69,200 | Wallets: 1 | Txs: 1          
+  2025-02-02 | Blocks: 69,023 - 69,300 | Wallets: 1 | Txs: 1          
+  2025-02-02 | Blocks: 69,023 - 69,400 | Wallets: 2 | Txs: 2          
+  2025-02-02 | Blocks: 69,023 - 69,500 | Wallets: 2 | Txs: 2          
+  2025-02-02 | Blocks: 69,023 - 69,600 | Wallets: 5 | Txs: 5          
+  2025-02-02 | Blocks: 69,023 - 69,700 | Wallets: 5 | Txs: 5          
+  2025-02-02 | Blocks: 69,023 - 69,800 | Wallets: 680 | Txs: 90          
+  2025-02-02 | Blocks: 69,023 - 69,900 | Wallets: 1,016 | Txs: 133          
+  2025-02-02 | Blocks: 69,023 - 70,000 | Wallets: 1,016 | Txs: 133          
+  2025-02-02 | Blocks: 69,023 - 70,100 | Wallets: 1,016 | Txs: 133          
+  2025-02-02 | Blocks: 69,023 - 70,200 | Wallets: 1,016 | Txs: 134          
+  2025-02-02 | Blocks: 69,023 - 70,300 | Wallets: 1,016 | Txs: 135          
+  2025-02-02 | Blocks: 69,023 - 70,400 | Wallets: 1,016 | Txs: 136          Γ£ô 2025-02-02 | Blocks: 69,023 - 70,438 | Wallets: 1,016 | Active: 508 | Txs: 136
+
+  2025-02-03 | Blocks: 70,439 - 70,500 | Wallets: 1 | Txs: 1          
+  2025-02-03 | Blocks: 70,439 - 70,600 | Wallets: 2 | Txs: 2          
+  2025-02-03 | Blocks: 70,439 - 70,700 | Wallets: 2 | Txs: 2          
+  2025-02-03 | Blocks: 70,439 - 70,800 | Wallets: 2 | Txs: 2          
+  2025-02-03 | Blocks: 70,439 - 70,900 | Wallets: 3 | Txs: 4          
+  2025-02-03 | Blocks: 70,439 - 71,000 | Wallets: 4 | Txs: 5          
+  2025-02-03 | Blocks: 70,439 - 71,100 | Wallets: 5 | Txs: 6          
+  2025-02-03 | Blocks: 70,439 - 71,200 | Wallets: 9 | Txs: 9          
+  2025-02-03 | Blocks: 70,439 - 71,300 | Wallets: 9 | Txs: 9          
+  2025-02-03 | Blocks: 70,439 - 71,400 | Wallets: 9 | Txs: 9          
+  2025-02-03 | Blocks: 70,439 - 71,500 | Wallets: 9 | Txs: 9          
+  2025-02-03 | Blocks: 70,439 - 71,600 | Wallets: 14 | Txs: 13          
+  2025-02-03 | Blocks: 70,439 - 71,700 | Wallets: 1,018 | Txs: 147          
+  2025-02-03 | Blocks: 70,439 - 71,800 | Wallets: 1,018 | Txs: 149          Γ£ô 2025-02-03 | Blocks: 70,439 - 71,855 | Wallets: 1,018 | Active: 509 | Txs: 149
+
+  2025-02-04 | Blocks: 71,856 - 71,900 | Wallets: 2 | Txs: 2          
+  2025-02-04 | Blocks: 71,856 - 72,000 | Wallets: 2 | Txs: 2          
+  2025-02-04 | Blocks: 71,856 - 72,100 | Wallets: 2 | Txs: 2          
+  2025-02-04 | Blocks: 71,856 - 72,200 | Wallets: 2 | Txs: 2          
+  2025-02-04 | Blocks: 71,856 - 72,300 | Wallets: 2 | Txs: 2          
+  2025-02-04 | Blocks: 71,856 - 72,400 | Wallets: 3 | Txs: 3          
+  2025-02-04 | Blocks: 71,856 - 72,500 | Wallets: 5 | Txs: 5          
+  2025-02-04 | Blocks: 71,856 - 72,600 | Wallets: 6 | Txs: 6          
+  2025-02-04 | Blocks: 71,856 - 72,700 | Wallets: 1,014 | Txs: 137          
+  2025-02-04 | Blocks: 71,856 - 72,800 | Wallets: 1,014 | Txs: 138          
+  2025-02-04 | Blocks: 71,856 - 72,900 | Wallets: 1,015 | Txs: 140          
+  2025-02-04 | Blocks: 71,856 - 73,000 | Wallets: 1,016 | Txs: 144          
+  2025-02-04 | Blocks: 71,856 - 73,100 | Wallets: 1,016 | Txs: 144          
+  2025-02-04 | Blocks: 71,856 - 73,200 | Wallets: 1,016 | Txs: 146          Γ£ô 2025-02-04 | Blocks: 71,856 - 73,272 | Wallets: 1,016 | Active: 508 | Txs: 148
+
+  2025-02-05 | Blocks: 73,273 - 73,300 | Wallets: 0 | Txs: 0          
+  2025-02-05 | Blocks: 73,273 - 73,400 | Wallets: 0 | Txs: 0          
+  2025-02-05 | Blocks: 73,273 - 73,500 | Wallets: 2 | Txs: 1          
+  2025-02-05 | Blocks: 73,273 - 73,600 | Wallets: 2 | Txs: 1          
+  2025-02-05 | Blocks: 73,273 - 73,700 | Wallets: 2 | Txs: 1          
+  2025-02-05 | Blocks: 73,273 - 73,800 | Wallets: 2 | Txs: 1          
+  2025-02-05 | Blocks: 73,273 - 73,900 | Wallets: 4 | Txs: 3          
+  2025-02-05 | Blocks: 73,273 - 74,000 | Wallets: 6 | Txs: 5          
+  2025-02-05 | Blocks: 73,273 - 74,100 | Wallets: 6 | Txs: 5          
+  2025-02-05 | Blocks: 73,273 - 74,200 | Wallets: 8 | Txs: 7          
+  2025-02-05 | Blocks: 73,273 - 74,300 | Wallets: 9 | Txs: 8          
+  2025-02-05 | Blocks: 73,273 - 74,400 | Wallets: 14 | Txs: 12          
+  2025-02-05 | Blocks: 73,273 - 74,500 | Wallets: 1,014 | Txs: 138          
+  2025-02-05 | Blocks: 73,273 - 74,600 | Wallets: 1,014 | Txs: 141          Γ£ô 2025-02-05 | Blocks: 73,273 - 74,688 | Wallets: 1,014 | Active: 507 | Txs: 144
+
+  2025-02-06 | Blocks: 74,689 - 74,700 | Wallets: 0 | Txs: 0          
+  2025-02-06 | Blocks: 74,689 - 74,800 | Wallets: 0 | Txs: 0          
+  2025-02-06 | Blocks: 74,689 - 74,900 | Wallets: 0 | Txs: 0          
+  2025-02-06 | Blocks: 74,689 - 75,000 | Wallets: 2 | Txs: 3          
+  2025-02-06 | Blocks: 74,689 - 75,100 | Wallets: 2 | Txs: 3          
+  2025-02-06 | Blocks: 74,689 - 75,200 | Wallets: 2 | Txs: 3          
+  2025-02-06 | Blocks: 74,689 - 75,300 | Wallets: 2 | Txs: 3          
+  2025-02-06 | Blocks: 74,689 - 75,400 | Wallets: 5 | Txs: 6          
+  2025-02-06 | Blocks: 74,689 - 75,500 | Wallets: 8 | Txs: 8          
+  2025-02-06 | Blocks: 74,689 - 75,600 | Wallets: 12 | Txs: 13          
+  2025-02-06 | Blocks: 74,689 - 75,700 | Wallets: 12 | Txs: 13          
+  2025-02-06 | Blocks: 74,689 - 75,800 | Wallets: 12 | Txs: 13          
+  2025-02-06 | Blocks: 74,689 - 75,900 | Wallets: 1,017 | Txs: 149          
+  2025-02-06 | Blocks: 74,689 - 76,000 | Wallets: 1,017 | Txs: 150          
+  2025-02-06 | Blocks: 74,689 - 76,100 | Wallets: 1,017 | Txs: 150          Γ£ô 2025-02-06 | Blocks: 74,689 - 76,105 | Wallets: 1,017 | Active: 508 | Txs: 150
+
+  2025-02-07 | Blocks: 76,106 - 76,200 | Wallets: 1 | Txs: 1          
+  2025-02-07 | Blocks: 76,106 - 76,300 | Wallets: 2 | Txs: 3          
+  2025-02-07 | Blocks: 76,106 - 76,400 | Wallets: 2 | Txs: 3          
+  2025-02-07 | Blocks: 76,106 - 76,500 | Wallets: 3 | Txs: 4          
+  2025-02-07 | Blocks: 76,106 - 76,600 | Wallets: 3 | Txs: 4          
+  2025-02-07 | Blocks: 76,106 - 76,700 | Wallets: 4 | Txs: 5          
+  2025-02-07 | Blocks: 76,106 - 76,800 | Wallets: 10 | Txs: 9          
+  2025-02-07 | Blocks: 76,106 - 76,900 | Wallets: 11 | Txs: 10          
+  2025-02-07 | Blocks: 76,106 - 77,000 | Wallets: 11 | Txs: 11          
+  2025-02-07 | Blocks: 76,106 - 77,100 | Wallets: 15 | Txs: 15          
+  2025-02-07 | Blocks: 76,106 - 77,200 | Wallets: 18 | Txs: 21          
+  2025-02-07 | Blocks: 76,106 - 77,300 | Wallets: 19 | Txs: 23          
+  2025-02-07 | Blocks: 76,106 - 77,400 | Wallets: 1,016 | Txs: 148          
+  2025-02-07 | Blocks: 76,106 - 77,500 | Wallets: 1,016 | Txs: 149          Γ£ô 2025-02-07 | Blocks: 76,106 - 77,522 | Wallets: 1,015 | Active: 507 | Txs: 149
+
+  2025-02-08 | Blocks: 77,523 - 77,600 | Wallets: 0 | Txs: 0          
+  2025-02-08 | Blocks: 77,523 - 77,700 | Wallets: 0 | Txs: 0          
+  2025-02-08 | Blocks: 77,523 - 77,800 | Wallets: 0 | Txs: 0          
+  2025-02-08 | Blocks: 77,523 - 77,900 | Wallets: 1 | Txs: 1          
+  2025-02-08 | Blocks: 77,523 - 78,000 | Wallets: 1 | Txs: 1          
+  2025-02-08 | Blocks: 77,523 - 78,100 | Wallets: 3 | Txs: 2          
+  2025-02-08 | Blocks: 77,523 - 78,200 | Wallets: 3 | Txs: 2          
+  2025-02-08 | Blocks: 77,523 - 78,300 | Wallets: 1,013 | Txs: 138          
+  2025-02-08 | Blocks: 77,523 - 78,400 | Wallets: 1,013 | Txs: 139          
+  2025-02-08 | Blocks: 77,523 - 78,500 | Wallets: 1,013 | Txs: 141          
+  2025-02-08 | Blocks: 77,523 - 78,600 | Wallets: 1,013 | Txs: 144          
+  2025-02-08 | Blocks: 77,523 - 78,700 | Wallets: 1,015 | Txs: 149          
+  2025-02-08 | Blocks: 77,523 - 78,800 | Wallets: 1,015 | Txs: 150          
+  2025-02-08 | Blocks: 77,523 - 78,900 | Wallets: 1,015 | Txs: 151          Γ£ô 2025-02-08 | Blocks: 77,523 - 78,938 | Wallets: 1,015 | Active: 507 | Txs: 151
+
+  2025-02-09 | Blocks: 78,939 - 79,000 | Wallets: 0 | Txs: 0          
+  2025-02-09 | Blocks: 78,939 - 79,100 | Wallets: 0 | Txs: 0          
+  2025-02-09 | Blocks: 78,939 - 79,200 | Wallets: 0 | Txs: 0          
+  2025-02-09 | Blocks: 78,939 - 79,300 | Wallets: 0 | Txs: 0          
+  2025-02-09 | Blocks: 78,939 - 79,400 | Wallets: 0 | Txs: 0          
+  2025-02-09 | Blocks: 78,939 - 79,500 | Wallets: 1 | Txs: 1          
+  2025-02-09 | Blocks: 78,939 - 79,600 | Wallets: 2 | Txs: 2          
+  2025-02-09 | Blocks: 78,939 - 79,700 | Wallets: 3 | Txs: 3          
+  2025-02-09 | Blocks: 78,939 - 79,800 | Wallets: 5 | Txs: 4          
+  2025-02-09 | Blocks: 78,939 - 79,900 | Wallets: 6 | Txs: 5          
+  2025-02-09 | Blocks: 78,939 - 80,000 | Wallets: 7 | Txs: 6          
+  2025-02-09 | Blocks: 78,939 - 80,100 | Wallets: 986 | Txs: 128          
+  2025-02-09 | Blocks: 78,939 - 80,200 | Wallets: 986 | Txs: 128          
+  2025-02-09 | Blocks: 78,939 - 80,300 | Wallets: 986 | Txs: 129          Γ£ô 2025-02-09 | Blocks: 78,939 - 80,355 | Wallets: 986 | Active: 493 | Txs: 129
+
+  2025-02-10 | Blocks: 80,356 - 80,400 | Wallets: 0 | Txs: 0          
+  2025-02-10 | Blocks: 80,356 - 80,500 | Wallets: 0 | Txs: 0          
+  2025-02-10 | Blocks: 80,356 - 80,600 | Wallets: 0 | Txs: 0          
+  2025-02-10 | Blocks: 80,356 - 80,700 | Wallets: 0 | Txs: 0          
+  2025-02-10 | Blocks: 80,356 - 80,800 | Wallets: 0 | Txs: 0          
+  2025-02-10 | Blocks: 80,356 - 80,900 | Wallets: 2 | Txs: 1          
+  2025-02-10 | Blocks: 80,356 - 81,000 | Wallets: 10 | Txs: 6          
+  2025-02-10 | Blocks: 80,356 - 81,100 | Wallets: 19 | Txs: 12          
+  2025-02-10 | Blocks: 80,356 - 81,200 | Wallets: 24 | Txs: 17          
+  2025-02-10 | Blocks: 80,356 - 81,300 | Wallets: 28 | Txs: 25          
+  2025-02-10 | Blocks: 80,356 - 81,400 | Wallets: 29 | Txs: 26          
+  2025-02-10 | Blocks: 80,356 - 81,500 | Wallets: 30 | Txs: 28          
+  2025-02-10 | Blocks: 80,356 - 81,600 | Wallets: 99 | Txs: 646          
+  2025-02-10 | Blocks: 80,356 - 81,700 | Wallets: 106 | Txs: 662          Γ£ô 2025-02-10 | Blocks: 80,356 - 81,772 | Wallets: 136 | Active: 68 | Txs: 706
+
+  2025-02-11 | Blocks: 81,773 - 81,800 | Wallets: 0 | Txs: 0          
+  2025-02-11 | Blocks: 81,773 - 81,900 | Wallets: 0 | Txs: 0          
+  2025-02-11 | Blocks: 81,773 - 82,000 | Wallets: 1 | Txs: 1          
+  2025-02-11 | Blocks: 81,773 - 82,100 | Wallets: 1 | Txs: 1          
+  2025-02-11 | Blocks: 81,773 - 82,200 | Wallets: 2 | Txs: 2          
+  2025-02-11 | Blocks: 81,773 - 82,300 | Wallets: 2 | Txs: 2          
+  2025-02-11 | Blocks: 81,773 - 82,400 | Wallets: 5 | Txs: 4          
+  2025-02-11 | Blocks: 81,773 - 82,500 | Wallets: 10 | Txs: 8          
+  2025-02-11 | Blocks: 81,773 - 82,600 | Wallets: 10 | Txs: 8          
+  2025-02-11 | Blocks: 81,773 - 82,700 | Wallets: 13 | Txs: 11          
+  2025-02-11 | Blocks: 81,773 - 82,800 | Wallets: 13 | Txs: 11          
+  2025-02-11 | Blocks: 81,773 - 82,900 | Wallets: 13 | Txs: 11          
+  2025-02-11 | Blocks: 81,773 - 83,000 | Wallets: 1,057 | Txs: 145          
+  2025-02-11 | Blocks: 81,773 - 83,100 | Wallets: 1,057 | Txs: 148          Γ£ô 2025-02-11 | Blocks: 81,773 - 83,188 | Wallets: 1,057 | Active: 528 | Txs: 149
+
+  2025-02-12 | Blocks: 83,189 - 83,200 | Wallets: 0 | Txs: 0          
+  2025-02-12 | Blocks: 83,189 - 83,300 | Wallets: 2 | Txs: 2          
+  2025-02-12 | Blocks: 83,189 - 83,400 | Wallets: 2 | Txs: 2          
+  2025-02-12 | Blocks: 83,189 - 83,500 | Wallets: 2 | Txs: 2          
+  2025-02-12 | Blocks: 83,189 - 83,600 | Wallets: 5 | Txs: 4          
+  2025-02-12 | Blocks: 83,189 - 83,700 | Wallets: 8 | Txs: 6          
+  2025-02-12 | Blocks: 83,189 - 83,800 | Wallets: 8 | Txs: 6          
+  2025-02-12 | Blocks: 83,189 - 83,900 | Wallets: 93 | Txs: 24          
+  2025-02-12 | Blocks: 83,189 - 84,000 | Wallets: 1,119 | Txs: 305          
+  2025-02-12 | Blocks: 83,189 - 84,100 | Wallets: 1,120 | Txs: 307          
+  2025-02-12 | Blocks: 83,189 - 84,200 | Wallets: 1,120 | Txs: 309          
+  2025-02-12 | Blocks: 83,189 - 84,300 | Wallets: 1,120 | Txs: 309          
+  2025-02-12 | Blocks: 83,189 - 84,400 | Wallets: 1,120 | Txs: 309          
+  2025-02-12 | Blocks: 83,189 - 84,500 | Wallets: 1,121 | Txs: 313          
+  2025-02-12 | Blocks: 83,189 - 84,600 | Wallets: 1,121 | Txs: 315          Γ£ô 2025-02-12 | Blocks: 83,189 - 84,605 | Wallets: 1,121 | Active: 560 | Txs: 315
+
+  2025-02-13 | Blocks: 84,606 - 84,700 | Wallets: 1 | Txs: 1          
+  2025-02-13 | Blocks: 84,606 - 84,800 | Wallets: 1 | Txs: 1          
+  2025-02-13 | Blocks: 84,606 - 84,900 | Wallets: 1 | Txs: 1          
+  2025-02-13 | Blocks: 84,606 - 85,000 | Wallets: 1 | Txs: 1          
+  2025-02-13 | Blocks: 84,606 - 85,100 | Wallets: 1 | Txs: 2          
+  2025-02-13 | Blocks: 84,606 - 85,200 | Wallets: 2 | Txs: 6          
+  2025-02-13 | Blocks: 84,606 - 85,300 | Wallets: 4 | Txs: 7          
+  2025-02-13 | Blocks: 84,606 - 85,400 | Wallets: 5 | Txs: 8          
+  2025-02-13 | Blocks: 84,606 - 85,500 | Wallets: 8 | Txs: 10          
+  2025-02-13 | Blocks: 84,606 - 85,600 | Wallets: 10 | Txs: 13          
+  2025-02-13 | Blocks: 84,606 - 85,700 | Wallets: 13 | Txs: 15          
+  2025-02-13 | Blocks: 84,606 - 85,800 | Wallets: 275 | Txs: 46          
+  2025-02-13 | Blocks: 84,606 - 85,900 | Wallets: 1,113 | Txs: 157          
+  2025-02-13 | Blocks: 84,606 - 86,000 | Wallets: 1,114 | Txs: 160          Γ£ô 2025-02-13 | Blocks: 84,606 - 86,022 | Wallets: 1,114 | Active: 557 | Txs: 160
+
+  2025-02-14 | Blocks: 86,023 - 86,100 | Wallets: 0 | Txs: 0          
+  2025-02-14 | Blocks: 86,023 - 86,200 | Wallets: 1 | Txs: 1          
+  2025-02-14 | Blocks: 86,023 - 86,300 | Wallets: 1 | Txs: 1          
+  2025-02-14 | Blocks: 86,023 - 86,400 | Wallets: 1 | Txs: 1          
+  2025-02-14 | Blocks: 86,023 - 86,500 | Wallets: 1 | Txs: 1          
+  2025-02-14 | Blocks: 86,023 - 86,600 | Wallets: 5 | Txs: 5          
+  2025-02-14 | Blocks: 86,023 - 86,700 | Wallets: 5 | Txs: 5          
+  2025-02-14 | Blocks: 86,023 - 86,800 | Wallets: 6 | Txs: 7          
+  2025-02-14 | Blocks: 86,023 - 86,900 | Wallets: 10 | Txs: 11          
+  2025-02-14 | Blocks: 86,023 - 87,000 | Wallets: 15 | Txs: 16          
+  2025-02-14 | Blocks: 86,023 - 87,100 | Wallets: 15 | Txs: 16          
+  2025-02-14 | Blocks: 86,023 - 87,200 | Wallets: 967 | Txs: 138          
+  2025-02-14 | Blocks: 86,023 - 87,300 | Wallets: 1,110 | Txs: 161          
+  2025-02-14 | Blocks: 86,023 - 87,400 | Wallets: 1,110 | Txs: 162          Γ£ô 2025-02-14 | Blocks: 86,023 - 87,438 | Wallets: 1,110 | Active: 555 | Txs: 162
+
+  2025-02-15 | Blocks: 87,439 - 87,500 | Wallets: 0 | Txs: 0          
+  2025-02-15 | Blocks: 87,439 - 87,600 | Wallets: 0 | Txs: 0          
+  2025-02-15 | Blocks: 87,439 - 87,700 | Wallets: 0 | Txs: 0          
+  2025-02-15 | Blocks: 87,439 - 87,800 | Wallets: 3 | Txs: 2          
+  2025-02-15 | Blocks: 87,439 - 87,900 | Wallets: 5 | Txs: 4          
+  2025-02-15 | Blocks: 87,439 - 88,000 | Wallets: 5 | Txs: 4          
+  2025-02-15 | Blocks: 87,439 - 88,100 | Wallets: 5 | Txs: 4          
+  2025-02-15 | Blocks: 87,439 - 88,200 | Wallets: 9 | Txs: 7          
+  2025-02-15 | Blocks: 87,439 - 88,300 | Wallets: 1,113 | Txs: 143          
+  2025-02-15 | Blocks: 87,439 - 88,400 | Wallets: 1,114 | Txs: 151          
+  2025-02-15 | Blocks: 87,439 - 88,500 | Wallets: 1,115 | Txs: 154          
+  2025-02-15 | Blocks: 87,439 - 88,600 | Wallets: 1,116 | Txs: 155          
+  2025-02-15 | Blocks: 87,439 - 88,700 | Wallets: 1,116 | Txs: 156          
+  2025-02-15 | Blocks: 87,439 - 88,800 | Wallets: 1,116 | Txs: 156          Γ£ô 2025-02-15 | Blocks: 87,439 - 88,855 | Wallets: 1,116 | Active: 558 | Txs: 156
+
+  2025-02-16 | Blocks: 88,856 - 88,900 | Wallets: 1 | Txs: 1          
+  2025-02-16 | Blocks: 88,856 - 89,000 | Wallets: 1 | Txs: 1          
+  2025-02-16 | Blocks: 88,856 - 89,100 | Wallets: 1 | Txs: 1          
+  2025-02-16 | Blocks: 88,856 - 89,200 | Wallets: 1 | Txs: 1          
+  2025-02-16 | Blocks: 88,856 - 89,300 | Wallets: 1 | Txs: 1          
+  2025-02-16 | Blocks: 88,856 - 89,400 | Wallets: 1 | Txs: 1          
+  2025-02-16 | Blocks: 88,856 - 89,500 | Wallets: 3 | Txs: 3          
+  2025-02-16 | Blocks: 88,856 - 89,600 | Wallets: 3 | Txs: 3          
+  2025-02-16 | Blocks: 88,856 - 89,700 | Wallets: 3 | Txs: 3          
+  2025-02-16 | Blocks: 88,856 - 89,800 | Wallets: 4 | Txs: 4          
+  2025-02-16 | Blocks: 88,856 - 89,900 | Wallets: 5 | Txs: 6          
+  2025-02-16 | Blocks: 88,856 - 90,000 | Wallets: 7 | Txs: 7          
+  2025-02-16 | Blocks: 88,856 - 90,100 | Wallets: 7 | Txs: 7          
+  2025-02-16 | Blocks: 88,856 - 90,200 | Wallets: 7 | Txs: 7          Γ£ô 2025-02-16 | Blocks: 88,856 - 90,272 | Wallets: 13 | Active: 6 | Txs: 21
+
+  2025-02-17 | Blocks: 90,273 - 90,300 | Wallets: 1 | Txs: 1          
+  2025-02-17 | Blocks: 90,273 - 90,400 | Wallets: 3 | Txs: 2          
+  2025-02-17 | Blocks: 90,273 - 90,500 | Wallets: 3 | Txs: 2          
+  2025-02-17 | Blocks: 90,273 - 90,600 | Wallets: 4 | Txs: 7          
+  2025-02-17 | Blocks: 90,273 - 90,700 | Wallets: 4 | Txs: 7          
+  2025-02-17 | Blocks: 90,273 - 90,800 | Wallets: 7 | Txs: 9          
+  2025-02-17 | Blocks: 90,273 - 90,900 | Wallets: 7 | Txs: 9          
+  2025-02-17 | Blocks: 90,273 - 91,000 | Wallets: 9 | Txs: 10          
+  2025-02-17 | Blocks: 90,273 - 91,100 | Wallets: 1,109 | Txs: 299          
+  2025-02-17 | Blocks: 90,273 - 91,200 | Wallets: 1,109 | Txs: 307          
+  2025-02-17 | Blocks: 90,273 - 91,300 | Wallets: 1,109 | Txs: 308          
+  2025-02-17 | Blocks: 90,273 - 91,400 | Wallets: 1,109 | Txs: 309          
+  2025-02-17 | Blocks: 90,273 - 91,500 | Wallets: 1,109 | Txs: 310          
+  2025-02-17 | Blocks: 90,273 - 91,600 | Wallets: 1,109 | Txs: 310          Γ£ô 2025-02-17 | Blocks: 90,273 - 91,689 | Wallets: 1,109 | Active: 554 | Txs: 313
+
+  2025-02-18 | Blocks: 91,690 - 91,700 | Wallets: 0 | Txs: 0          
+  2025-02-18 | Blocks: 91,690 - 91,800 | Wallets: 0 | Txs: 0          
+  2025-02-18 | Blocks: 91,690 - 91,900 | Wallets: 0 | Txs: 0          
+  2025-02-18 | Blocks: 91,690 - 92,000 | Wallets: 0 | Txs: 0          
+  2025-02-18 | Blocks: 91,690 - 92,100 | Wallets: 1 | Txs: 1          
+  2025-02-18 | Blocks: 91,690 - 92,200 | Wallets: 1 | Txs: 1          
+  2025-02-18 | Blocks: 91,690 - 92,300 | Wallets: 1 | Txs: 1          
+  2025-02-18 | Blocks: 91,690 - 92,400 | Wallets: 4 | Txs: 3          
+  2025-02-18 | Blocks: 91,690 - 92,500 | Wallets: 7 | Txs: 5          
+  2025-02-18 | Blocks: 91,690 - 92,600 | Wallets: 9 | Txs: 7          
+  2025-02-18 | Blocks: 91,690 - 92,700 | Wallets: 10 | Txs: 8          
+  2025-02-18 | Blocks: 91,690 - 92,800 | Wallets: 12 | Txs: 11          
+  2025-02-18 | Blocks: 91,690 - 92,900 | Wallets: 19 | Txs: 15          
+  2025-02-18 | Blocks: 91,690 - 93,000 | Wallets: 23 | Txs: 17          
+  2025-02-18 | Blocks: 91,690 - 93,100 | Wallets: 24 | Txs: 18          Γ£ô 2025-02-18 | Blocks: 91,690 - 93,105 | Wallets: 24 | Active: 12 | Txs: 18
+
+  2025-02-19 | Blocks: 93,106 - 93,200 | Wallets: 1 | Txs: 2          
+  2025-02-19 | Blocks: 93,106 - 93,300 | Wallets: 1 | Txs: 2          
+  2025-02-19 | Blocks: 93,106 - 93,400 | Wallets: 1 | Txs: 2          
+  2025-02-19 | Blocks: 93,106 - 93,500 | Wallets: 1 | Txs: 2          
+  2025-02-19 | Blocks: 93,106 - 93,600 | Wallets: 1 | Txs: 2          
+  2025-02-19 | Blocks: 93,106 - 93,700 | Wallets: 442 | Txs: 58          
+  2025-02-19 | Blocks: 93,106 - 93,800 | Wallets: 1,099 | Txs: 143          
+  2025-02-19 | Blocks: 93,106 - 93,900 | Wallets: 1,099 | Txs: 148          
+  2025-02-19 | Blocks: 93,106 - 94,000 | Wallets: 1,100 | Txs: 149          
+  2025-02-19 | Blocks: 93,106 - 94,100 | Wallets: 1,100 | Txs: 150          
+  2025-02-19 | Blocks: 93,106 - 94,200 | Wallets: 1,100 | Txs: 150          
+  2025-02-19 | Blocks: 93,106 - 94,300 | Wallets: 1,100 | Txs: 150          
+  2025-02-19 | Blocks: 93,106 - 94,400 | Wallets: 1,101 | Txs: 152          
+  2025-02-19 | Blocks: 93,106 - 94,500 | Wallets: 1,101 | Txs: 153          Γ£ô 2025-02-19 | Blocks: 93,106 - 94,522 | Wallets: 1,101 | Active: 550 | Txs: 153
+
+  2025-02-20 | Blocks: 94,523 - 94,600 | Wallets: 2 | Txs: 1          
+  2025-02-20 | Blocks: 94,523 - 94,700 | Wallets: 2 | Txs: 1          
+  2025-02-20 | Blocks: 94,523 - 94,800 | Wallets: 2 | Txs: 1          
+  2025-02-20 | Blocks: 94,523 - 94,900 | Wallets: 2 | Txs: 1          
+  2025-02-20 | Blocks: 94,523 - 95,000 | Wallets: 4 | Txs: 2          
+  2025-02-20 | Blocks: 94,523 - 95,100 | Wallets: 4 | Txs: 2          
+  2025-02-20 | Blocks: 94,523 - 95,200 | Wallets: 4 | Txs: 2          
+  2025-02-20 | Blocks: 94,523 - 95,300 | Wallets: 5 | Txs: 3          
+  2025-02-20 | Blocks: 94,523 - 95,400 | Wallets: 1,098 | Txs: 139          
+  2025-02-20 | Blocks: 94,523 - 95,500 | Wallets: 1,101 | Txs: 183          
+  2025-02-20 | Blocks: 94,523 - 95,600 | Wallets: 1,101 | Txs: 294          
+  2025-02-20 | Blocks: 94,523 - 95,700 | Wallets: 1,101 | Txs: 297          
+  2025-02-20 | Blocks: 94,523 - 95,800 | Wallets: 1,101 | Txs: 299          
+  2025-02-20 | Blocks: 94,523 - 95,900 | Wallets: 1,101 | Txs: 300          Γ£ô 2025-02-20 | Blocks: 94,523 - 95,939 | Wallets: 1,101 | Active: 550 | Txs: 300
+
+  2025-02-21 | Blocks: 95,940 - 96,000 | Wallets: 0 | Txs: 0          
+  2025-02-21 | Blocks: 95,940 - 96,100 | Wallets: 0 | Txs: 0          
+  2025-02-21 | Blocks: 95,940 - 96,200 | Wallets: 1 | Txs: 1          
+  2025-02-21 | Blocks: 95,940 - 96,300 | Wallets: 1 | Txs: 1          
+  2025-02-21 | Blocks: 95,940 - 96,400 | Wallets: 3 | Txs: 2          
+  2025-02-21 | Blocks: 95,940 - 96,500 | Wallets: 4 | Txs: 3          
+  2025-02-21 | Blocks: 95,940 - 96,600 | Wallets: 4 | Txs: 3          
+  2025-02-21 | Blocks: 95,940 - 96,700 | Wallets: 10 | Txs: 10          
+  2025-02-21 | Blocks: 95,940 - 96,800 | Wallets: 113 | Txs: 202          
+  2025-02-21 | Blocks: 95,940 - 96,900 | Wallets: 118 | Txs: 207          
+  2025-02-21 | Blocks: 95,940 - 97,000 | Wallets: 1,206 | Txs: 290          
+  2025-02-21 | Blocks: 95,940 - 97,100 | Wallets: 1,206 | Txs: 291          
+  2025-02-21 | Blocks: 95,940 - 97,200 | Wallets: 1,206 | Txs: 292          
+  2025-02-21 | Blocks: 95,940 - 97,300 | Wallets: 1,206 | Txs: 293          Γ£ô 2025-02-21 | Blocks: 95,940 - 97,355 | Wallets: 1,206 | Active: 603 | Txs: 293
+
+  2025-02-22 | Blocks: 97,356 - 97,400 | Wallets: 2 | Txs: 2          
+  2025-02-22 | Blocks: 97,356 - 97,500 | Wallets: 3 | Txs: 3          
+  2025-02-22 | Blocks: 97,356 - 97,600 | Wallets: 3 | Txs: 3          
+  2025-02-22 | Blocks: 97,356 - 97,700 | Wallets: 3 | Txs: 3          
+  2025-02-22 | Blocks: 97,356 - 97,800 | Wallets: 3 | Txs: 3          
+  2025-02-22 | Blocks: 97,356 - 97,900 | Wallets: 3 | Txs: 3          
+  2025-02-22 | Blocks: 97,356 - 98,000 | Wallets: 5 | Txs: 5          
+  2025-02-22 | Blocks: 97,356 - 98,100 | Wallets: 1,215 | Txs: 250          
+  2025-02-22 | Blocks: 97,356 - 98,200 | Wallets: 1,217 | Txs: 262          
+  2025-02-22 | Blocks: 97,356 - 98,300 | Wallets: 1,217 | Txs: 264          
+  2025-02-22 | Blocks: 97,356 - 98,400 | Wallets: 1,217 | Txs: 265          
+  2025-02-22 | Blocks: 97,356 - 98,500 | Wallets: 1,217 | Txs: 270          
+  2025-02-22 | Blocks: 97,356 - 98,600 | Wallets: 1,217 | Txs: 272          
+  2025-02-22 | Blocks: 97,356 - 98,700 | Wallets: 1,217 | Txs: 274          Γ£ô 2025-02-22 | Blocks: 97,356 - 98,772 | Wallets: 1,218 | Active: 609 | Txs: 275
+
+  2025-02-23 | Blocks: 98,773 - 98,800 | Wallets: 0 | Txs: 0          
+  2025-02-23 | Blocks: 98,773 - 98,900 | Wallets: 1 | Txs: 1          
+  2025-02-23 | Blocks: 98,773 - 99,000 | Wallets: 1 | Txs: 1          
+  2025-02-23 | Blocks: 98,773 - 99,100 | Wallets: 2 | Txs: 2          
+  2025-02-23 | Blocks: 98,773 - 99,200 | Wallets: 2 | Txs: 2          
+  2025-02-23 | Blocks: 98,773 - 99,300 | Wallets: 3 | Txs: 3          
+  2025-02-23 | Blocks: 98,773 - 99,400 | Wallets: 6 | Txs: 5          
+  2025-02-23 | Blocks: 98,773 - 99,500 | Wallets: 6 | Txs: 5          
+  2025-02-23 | Blocks: 98,773 - 99,600 | Wallets: 7 | Txs: 6          
+  2025-02-23 | Blocks: 98,773 - 99,700 | Wallets: 8 | Txs: 7          
+  2025-02-23 | Blocks: 98,773 - 99,800 | Wallets: 8 | Txs: 7          
+  2025-02-23 | Blocks: 98,773 - 99,900 | Wallets: 8 | Txs: 7          
+  2025-02-23 | Blocks: 98,773 - 100,000 | Wallets: 8 | Txs: 7          
+  2025-02-23 | Blocks: 98,773 - 100,100 | Wallets: 10 | Txs: 9          Γ£ô 2025-02-23 | Blocks: 98,773 - 100,189 | Wallets: 10 | Active: 5 | Txs: 9
+
+  2025-02-24 | Blocks: 100,190 - 100,200 | Wallets: 0 | Txs: 0          
+  2025-02-24 | Blocks: 100,190 - 100,300 | Wallets: 0 | Txs: 0          
+  2025-02-24 | Blocks: 100,190 - 100,400 | Wallets: 0 | Txs: 0          
+  2025-02-24 | Blocks: 100,190 - 100,500 | Wallets: 1,225 | Txs: 82          
+  2025-02-24 | Blocks: 100,190 - 100,600 | Wallets: 1,225 | Txs: 82          
+  2025-02-24 | Blocks: 100,190 - 100,700 | Wallets: 1,225 | Txs: 83          
+  2025-02-24 | Blocks: 100,190 - 100,800 | Wallets: 1,225 | Txs: 85          
+  2025-02-24 | Blocks: 100,190 - 100,900 | Wallets: 1,225 | Txs: 87          
+  2025-02-24 | Blocks: 100,190 - 101,000 | Wallets: 1,236 | Txs: 181          
+  2025-02-24 | Blocks: 100,190 - 101,100 | Wallets: 1,236 | Txs: 182          
+  2025-02-24 | Blocks: 100,190 - 101,200 | Wallets: 1,236 | Txs: 186          
+  2025-02-24 | Blocks: 100,190 - 101,300 | Wallets: 1,236 | Txs: 186          
+  2025-02-24 | Blocks: 100,190 - 101,400 | Wallets: 1,236 | Txs: 186          
+  2025-02-24 | Blocks: 100,190 - 101,500 | Wallets: 1,236 | Txs: 189          
+  2025-02-24 | Blocks: 100,190 - 101,600 | Wallets: 1,237 | Txs: 190          Γ£ô 2025-02-24 | Blocks: 100,190 - 101,605 | Wallets: 1,236 | Active: 618 | Txs: 191
+
+  2025-02-25 | Blocks: 101,606 - 101,700 | Wallets: 0 | Txs: 0          
+  2025-02-25 | Blocks: 101,606 - 101,800 | Wallets: 0 | Txs: 0          
+  2025-02-25 | Blocks: 101,606 - 101,900 | Wallets: 0 | Txs: 0          
+  2025-02-25 | Blocks: 101,606 - 102,000 | Wallets: 2 | Txs: 1          
+  2025-02-25 | Blocks: 101,606 - 102,100 | Wallets: 3 | Txs: 2          
+  2025-02-25 | Blocks: 101,606 - 102,200 | Wallets: 6 | Txs: 5          
+  2025-02-25 | Blocks: 101,606 - 102,300 | Wallets: 9 | Txs: 7          
+  2025-02-25 | Blocks: 101,606 - 102,400 | Wallets: 9 | Txs: 7          
+  2025-02-25 | Blocks: 101,606 - 102,500 | Wallets: 11 | Txs: 18          
+  2025-02-25 | Blocks: 101,606 - 102,600 | Wallets: 11 | Txs: 18          
+  2025-02-25 | Blocks: 101,606 - 102,700 | Wallets: 11 | Txs: 18          
+  2025-02-25 | Blocks: 101,606 - 102,800 | Wallets: 11 | Txs: 18          
+  2025-02-25 | Blocks: 101,606 - 102,900 | Wallets: 11 | Txs: 18          
+  2025-02-25 | Blocks: 101,606 - 103,000 | Wallets: 11 | Txs: 18          Γ£ô 2025-02-25 | Blocks: 101,606 - 103,022 | Wallets: 11 | Active: 5 | Txs: 18
+
+  2025-02-26 | Blocks: 103,023 - 103,100 | Wallets: 0 | Txs: 0          
+  2025-02-26 | Blocks: 103,023 - 103,200 | Wallets: 1 | Txs: 5          
+  2025-02-26 | Blocks: 103,023 - 103,300 | Wallets: 2 | Txs: 6          
+  2025-02-26 | Blocks: 103,023 - 103,400 | Wallets: 2 | Txs: 6          
+  2025-02-26 | Blocks: 103,023 - 103,500 | Wallets: 2 | Txs: 6          
+  2025-02-26 | Blocks: 103,023 - 103,600 | Wallets: 3 | Txs: 7          
+  2025-02-26 | Blocks: 103,023 - 103,700 | Wallets: 4 | Txs: 8          
+  2025-02-26 | Blocks: 103,023 - 103,800 | Wallets: 7 | Txs: 15          
+  2025-02-26 | Blocks: 103,023 - 103,900 | Wallets: 8 | Txs: 16          
+  2025-02-26 | Blocks: 103,023 - 104,000 | Wallets: 9 | Txs: 17          
+  2025-02-26 | Blocks: 103,023 - 104,100 | Wallets: 9 | Txs: 17          
+  2025-02-26 | Blocks: 103,023 - 104,200 | Wallets: 9 | Txs: 17          
+  2025-02-26 | Blocks: 103,023 - 104,300 | Wallets: 10 | Txs: 18          
+  2025-02-26 | Blocks: 103,023 - 104,400 | Wallets: 11 | Txs: 19          Γ£ô 2025-02-26 | Blocks: 103,023 - 104,438 | Wallets: 11 | Active: 5 | Txs: 19
+
+  2025-02-27 | Blocks: 104,439 - 104,500 | Wallets: 0 | Txs: 0          
+  2025-02-27 | Blocks: 104,439 - 104,600 | Wallets: 2 | Txs: 1          
+  2025-02-27 | Blocks: 104,439 - 104,700 | Wallets: 2 | Txs: 1          
+  2025-02-27 | Blocks: 104,439 - 104,800 | Wallets: 2 | Txs: 1          
+  2025-02-27 | Blocks: 104,439 - 104,900 | Wallets: 2 | Txs: 1          
+  2025-02-27 | Blocks: 104,439 - 105,000 | Wallets: 2 | Txs: 1          
+  2025-02-27 | Blocks: 104,439 - 105,100 | Wallets: 1,234 | Txs: 172          
+  2025-02-27 | Blocks: 104,439 - 105,200 | Wallets: 1,234 | Txs: 177          
+  2025-02-27 | Blocks: 104,439 - 105,300 | Wallets: 1,234 | Txs: 181          
+  2025-02-27 | Blocks: 104,439 - 105,400 | Wallets: 1,234 | Txs: 184          
+  2025-02-27 | Blocks: 104,439 - 105,500 | Wallets: 1,234 | Txs: 185          
+  2025-02-27 | Blocks: 104,439 - 105,600 | Wallets: 1,234 | Txs: 185          
+  2025-02-27 | Blocks: 104,439 - 105,700 | Wallets: 1,234 | Txs: 185          
+  2025-02-27 | Blocks: 104,439 - 105,800 | Wallets: 1,234 | Txs: 185          Γ£ô 2025-02-27 | Blocks: 104,439 - 105,855 | Wallets: 1,233 | Active: 616 | Txs: 185
+
+  2025-02-28 | Blocks: 105,856 - 105,900 | Wallets: 0 | Txs: 0          
+  2025-02-28 | Blocks: 105,856 - 106,000 | Wallets: 0 | Txs: 0          
+  2025-02-28 | Blocks: 105,856 - 106,100 | Wallets: 0 | Txs: 0          
+  2025-02-28 | Blocks: 105,856 - 106,200 | Wallets: 0 | Txs: 0          
+  2025-02-28 | Blocks: 105,856 - 106,300 | Wallets: 0 | Txs: 0          
+  2025-02-28 | Blocks: 105,856 - 106,400 | Wallets: 1 | Txs: 1          
+  2025-02-28 | Blocks: 105,856 - 106,500 | Wallets: 1 | Txs: 1          
