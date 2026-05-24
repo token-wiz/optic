@@ -24,3 +24,4 @@ OPTIC/odata/optic.db
 
 # logs
 *.log
+OPTIC/wallet-balances.csv
