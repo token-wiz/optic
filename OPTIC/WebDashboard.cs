@@ -1096,7 +1096,7 @@ public static class WebDashboard
         return page switch
         {
             "dashboard" => "Dashboard",
-            "top100" => "Top 100",
+            "top100" => "Top 100 Wallets",
             "distributions" => "Distributions & Ledger",
             "locks" => "Locks & Staking",
             "counterparties" => "Counterparties",
@@ -2108,7 +2108,7 @@ public static class WebDashboard
                     <a href=""/"" class=""menu-item" + (page == "dashboard" ? @""" active" : @"""") + @""">Dashboard</a>
                     </li>
                     <li class=""menu-section"">
-                        <a href=""/page/top100"" class=""menu-item" + (page == "top100" ? @""" active" : @"""") + @""">Top 100</a>
+                        <a href=""/page/top100"" class=""menu-item" + (page == "top100" ? @""" active" : @"""") + @""">Top 100 Wallets</a>
                     </li>
                     <li class=""menu-section"">
                         <span class=""menu-label"">Reports</span>
@@ -2632,7 +2632,6 @@ public static class WebDashboard
     {
         sb.Append(@"
                     <div class=""card"" style=""grid-column: 1 / -1;"">
-                        <h2>Top 100 Wallets</h2>
                         <div class=""card-content"">
                             <div id=""top100-status"" style=""color: var(--text-secondary); margin-bottom: 8px;"">Loading top wallets...</div>
                             <div class=""data-table-wrap top100-table-wrap"">
@@ -2642,7 +2641,7 @@ public static class WebDashboard
                                             <th class=""sortable sort-asc"" data-sort=""rank"">Rank</th>
                                             <th class=""sortable"" data-sort=""address"">Wallet</th>
                                             <th class=""sortable"" data-sort=""total"">Total</th>
-                                            <th class=""sortable"" data-sort=""walletBalance"">Wallet Balance</th>
+                                            <th class=""sortable"" data-sort=""walletBalance"">Balance</th>
                                             <th class=""sortable"" data-sort=""staked"">Staked</th>
                                             <th class=""sortable"" data-sort=""unbonding"">Unbonding</th>
                                             <th class=""sortable"" data-sort=""totalLocked"">Locked</th>
@@ -2986,7 +2985,7 @@ public static class WebDashboard
                                         const values = filtered.map(r => r.activeWallets || 0);
                                         const maxVal = Math.max(...values);
                                         const minVal = Math.min(...values);
-                                        const width = 760;
+                                        const width = 1100;
                                         const height = 200;
                                         const padL = 56;
                                         const padR = 16;
@@ -3060,7 +3059,7 @@ public static class WebDashboard
                                             .join('');
 
                                         const chartHtml = `
-<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""none"">
+<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""xMinYMid meet"">
   <defs>
     <linearGradient id=""activeWalletsFill"" x1=""0"" x2=""0"" y1=""0"" y2=""1"">
       <stop offset=""0%"" stop-color=""rgba(0, 120, 212, 0.24)"" />
@@ -3198,7 +3197,7 @@ public static class WebDashboard
 
                                         const chronological = stats.slice().reverse();
                                         const values = chronological.map(r => r.totalWallets || 0);
-                                        const width = 760;
+                                        const width = 1100;
                                         const height = 200;
                                         const padL = 56;
                                         const padR = 16;
@@ -3270,7 +3269,7 @@ public static class WebDashboard
                                             .join('');
 
                                         const chartHtml = `
-<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""none"">
+<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""xMinYMid meet"">
   <rect x=""0"" y=""0"" width=""${width}"" height=""${height}"" fill=""var(--surface-light)""></rect>
   ${gridLines}
   <path d=""${linePath}"" fill=""none"" stroke=""var(--accent-primary)"" stroke-width=""2""></path>
