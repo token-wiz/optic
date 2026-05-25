@@ -2294,18 +2294,7 @@ public static class WebDashboard
                 <div class=""report-cards"">
 ");
         AppendWalletGrowthCard(sb);
-        AppendWalletTotalsCard(sb);
         AppendDailyStatsCard(sb);
-        sb.Append(@"
-                </div>
-
-                <h2 class=""section-title"">Quick Access</h2>
-                <div class=""report-cards"">
-");
-        AppendDistributionsCard(sb);
-        AppendLocksCard(sb);
-        AppendNetworkTotalsCard(sb);
-        AppendWalletBalancesCard(sb);
         sb.Append(@"
                 </div>
 ");
@@ -3074,8 +3063,8 @@ public static class WebDashboard
 <svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""none"">
   <defs>
     <linearGradient id=""activeWalletsFill"" x1=""0"" x2=""0"" y1=""0"" y2=""1"">
-      <stop offset=""0%"" stop-color=""rgba(16, 185, 129, 0.35)"" />
-      <stop offset=""100%"" stop-color=""rgba(16, 185, 129, 0.02)"" />
+      <stop offset=""0%"" stop-color=""rgba(0, 120, 212, 0.24)"" />
+      <stop offset=""100%"" stop-color=""rgba(0, 120, 212, 0.03)"" />
     </linearGradient>
   </defs>
   <rect x=""0"" y=""0"" width=""${width}"" height=""${height}"" fill=""var(--surface-light)""></rect>
@@ -3096,14 +3085,16 @@ public static class WebDashboard
                                         const tooltip = document.createElement('div');
                                         tooltip.style.position = 'absolute';
                                         tooltip.style.pointerEvents = 'none';
-                                        tooltip.style.background = 'rgba(15, 23, 42, 0.92)';
-                                        tooltip.style.border = '1px solid var(--border)';
+                                        tooltip.style.background = '#ffffff';
+                                        tooltip.style.border = '1px solid var(--border-strong)';
                                         tooltip.style.borderRadius = '6px';
                                         tooltip.style.padding = '6px 8px';
                                         tooltip.style.fontSize = '11px';
-                                        tooltip.style.color = 'var(--text-primary)';
+                                        tooltip.style.color = '#1b1a19';
+                                        tooltip.style.fontWeight = '600';
+                                        tooltip.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.18)';
                                         tooltip.style.opacity = '0';
-                                        tooltip.style.transform = 'translate(-50%, -8px)';
+                                        tooltip.style.transform = 'translate(-50%, -110%)';
                                         chartEl.appendChild(tooltip);
 
                                         const svg = chartEl.querySelector('svg');
@@ -3294,14 +3285,16 @@ public static class WebDashboard
                                         const tooltip = document.createElement('div');
                                         tooltip.style.position = 'absolute';
                                         tooltip.style.pointerEvents = 'none';
-                                        tooltip.style.background = 'rgba(15, 23, 42, 0.92)';
-                                        tooltip.style.border = '1px solid var(--border)';
+                                        tooltip.style.background = '#ffffff';
+                                        tooltip.style.border = '1px solid var(--border-strong)';
                                         tooltip.style.borderRadius = '6px';
                                         tooltip.style.padding = '6px 8px';
                                         tooltip.style.fontSize = '11px';
-                                        tooltip.style.color = 'var(--text-primary)';
+                                        tooltip.style.color = '#1b1a19';
+                                        tooltip.style.fontWeight = '600';
+                                        tooltip.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.18)';
                                         tooltip.style.opacity = '0';
-                                        tooltip.style.transform = 'translate(-50%, -8px)';
+                                        tooltip.style.transform = 'translate(-50%, -110%)';
                                         chartEl.appendChild(tooltip);
 
                                         const svg = chartEl.querySelector('svg');
