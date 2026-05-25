@@ -2101,7 +2101,7 @@ public static class WebDashboard
         <nav class=""top-nav"">
             <div class=""top-nav-inner"">
                 <a href=""/"" class=""brand-link"" aria-label=""OPTIC Dashboard"">
-                    <img src=""/images/optic-logo.png"" alt=""OPTIC Logo"" />
+                    <img src=""/images/optic-logo-color.png"" alt=""OPTIC Logo"" />
                 </a>
                 <ul class=""top-menu"">
                     <li class=""menu-section"">
