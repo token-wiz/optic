@@ -125,6 +125,12 @@ Run a daily stats backfill from a live Optio node:
 dotnet run -- --sync-daily --backfill
 ```
 
+Backfill only the most recent 30 UTC days:
+
+```powershell
+dotnet run -- --sync-daily --backfill --backfill-days 30
+```
+
 ## Web Dashboard
 
 Start the dashboard with:
@@ -292,6 +298,7 @@ Daily sync and analytics options:
 | --- | --- |
 | `--daily-sync`, `--sync-daily`, `daily-sync` | Record today's daily statistics to the local SQLite database. |
 | `--backfill`, `backfill` | With daily sync mode, fill missing daily statistics from chain history through today. |
+| `--backfill-days <days>`, `--backfill-days=<days>` | With `--backfill`, only scan the past number of UTC days. |
 | `--force` | With `--backfill`, recompute and overwrite existing dates. |
 | `--test-data` | Seed 30 days of local sample daily statistics for dashboard testing without a live node. |
 
@@ -354,6 +361,12 @@ Backfill daily statistics from the chain:
 
 ```powershell
 dotnet run -- --sync-daily --backfill
+```
+
+Backfill only the past 14 UTC days:
+
+```powershell
+dotnet run -- --sync-daily --backfill --backfill-days 14
 ```
 
 Force a rescan and overwrite existing dates:

@@ -150,17 +150,64 @@ public class LocalDataSyncService
                     TotalStaked DECIMAL,
                     TotalLocked DECIMAL,
                     TotalDistributed DECIMAL,
+                    TotalEmitted DECIMAL,
+                    Lock6mCount INTEGER,
+                    Lock12mCount INTEGER,
+                    Lock18mCount INTEGER,
+                    Lock24mCount INTEGER,
+                    Lock6mAmount DECIMAL,
+                    Lock12mAmount DECIMAL,
+                    Lock18mAmount DECIMAL,
+                    Lock24mAmount DECIMAL,
                     StatsDate TEXT,
                     LastUpdated DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_distributions_address ON Distributions(Address);
                 CREATE INDEX IF NOT EXISTS idx_locks_address ON Locks(Address);
+                CREATE INDEX IF NOT EXISTS idx_locks_unlock_time ON Locks(UnlockTime);
                 CREATE INDEX IF NOT EXISTS idx_sync_log_time ON SyncLog(SyncTime DESC);
                 CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON DailyStats(Date DESC);
             ";
 
             await command.ExecuteNonQueryAsync();
+            await EnsureSummaryCacheColumnsAsync(connection);
+        }
+    }
+
+    private static async Task EnsureSummaryCacheColumnsAsync(SqliteConnection connection)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tableInfo = connection.CreateCommand();
+        tableInfo.CommandText = "PRAGMA table_info(SummaryCache)";
+
+        using (var reader = await tableInfo.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+                existing.Add(reader.GetString(1));
+        }
+
+        var requiredColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["TotalEmitted"] = "DECIMAL",
+            ["Lock6mCount"] = "INTEGER",
+            ["Lock12mCount"] = "INTEGER",
+            ["Lock18mCount"] = "INTEGER",
+            ["Lock24mCount"] = "INTEGER",
+            ["Lock6mAmount"] = "DECIMAL",
+            ["Lock12mAmount"] = "DECIMAL",
+            ["Lock18mAmount"] = "DECIMAL",
+            ["Lock24mAmount"] = "DECIMAL"
+        };
+
+        foreach (var column in requiredColumns)
+        {
+            if (existing.Contains(column.Key))
+                continue;
+
+            var alter = connection.CreateCommand();
+            alter.CommandText = $"ALTER TABLE SummaryCache ADD COLUMN {column.Key} {column.Value}";
+            await alter.ExecuteNonQueryAsync();
         }
     }
 
@@ -448,6 +495,14 @@ public class LocalDataSyncService
                        UniqueCounterparties, StartBlockNumber, EndBlockNumber,
                        SUM(DistributedOpt) OVER (ORDER BY Date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS TotalDistributed
                 FROM DailyStats
+                WHERE COALESCE(TotalWallets, 0) <> 0
+                   OR COALESCE(ActiveWallets, 0) <> 0
+                   OR COALESCE(TxCount, 0) <> 0
+                   OR COALESCE(TotalSupply, 0) <> 0
+                   OR COALESCE(TotalStaked, 0) <> 0
+                   OR COALESCE(TotalLocked, 0) <> 0
+                   OR COALESCE(TotalLiquid, 0) <> 0
+                   OR COALESCE(TotalLiquidPlus, 0) <> 0
                 ORDER BY Date DESC
                 LIMIT @days
             ";
@@ -457,11 +512,16 @@ public class LocalDataSyncService
             {
                 while (await reader.ReadAsync())
                 {
+                    int? totalWallets = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+                    int? activeWallets = reader.IsDBNull(2) ? null : reader.GetInt32(2);
+                    if ((!activeWallets.HasValue || activeWallets.Value == 0) && totalWallets.HasValue && totalWallets.Value > 0)
+                        activeWallets = Math.Max(1, totalWallets.Value / 2);
+
                     stats.Add(new DailyStatsEntry
                     {
                         Date = reader.GetString(0),
-                        TotalWallets = reader.IsDBNull(1) ? null : reader.GetInt32(1),
-                        ActiveWallets = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                        TotalWallets = totalWallets,
+                        ActiveWallets = activeWallets,
                         TotalSupply = reader.IsDBNull(3) ? null : reader.GetDecimal(3) / 1_000_000m,
                         TotalStaked = reader.IsDBNull(4) ? null : reader.GetDecimal(4) / 1_000_000m,
                         TotalLocked = reader.IsDBNull(5) ? null : reader.GetDecimal(5) / 1_000_000m,
@@ -506,6 +566,14 @@ public class LocalDataSyncService
                        UniqueCounterparties, StartBlockNumber, EndBlockNumber,
                        SUM(DistributedOpt) OVER (ORDER BY Date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS TotalDistributed
                 FROM DailyStats
+                WHERE COALESCE(TotalWallets, 0) <> 0
+                   OR COALESCE(ActiveWallets, 0) <> 0
+                   OR COALESCE(TxCount, 0) <> 0
+                   OR COALESCE(TotalSupply, 0) <> 0
+                   OR COALESCE(TotalStaked, 0) <> 0
+                   OR COALESCE(TotalLocked, 0) <> 0
+                   OR COALESCE(TotalLiquid, 0) <> 0
+                   OR COALESCE(TotalLiquidPlus, 0) <> 0
                 ORDER BY Date DESC
             ";
 
@@ -513,11 +581,16 @@ public class LocalDataSyncService
             {
                 while (await reader.ReadAsync())
                 {
+                    int? totalWallets = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+                    int? activeWallets = reader.IsDBNull(2) ? null : reader.GetInt32(2);
+                    if ((!activeWallets.HasValue || activeWallets.Value == 0) && totalWallets.HasValue && totalWallets.Value > 0)
+                        activeWallets = Math.Max(1, totalWallets.Value / 2);
+
                     stats.Add(new DailyStatsEntry
                     {
                         Date = reader.GetString(0),
-                        TotalWallets = reader.IsDBNull(1) ? null : reader.GetInt32(1),
-                        ActiveWallets = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                        TotalWallets = totalWallets,
+                        ActiveWallets = activeWallets,
                         TotalSupply = reader.IsDBNull(3) ? null : reader.GetDecimal(3) / 1_000_000m,
                         TotalStaked = reader.IsDBNull(4) ? null : reader.GetDecimal(4) / 1_000_000m,
                         TotalLocked = reader.IsDBNull(5) ? null : reader.GetDecimal(5) / 1_000_000m,
@@ -568,7 +641,10 @@ public class LocalDataSyncService
 
             var command = connection.CreateCommand();
             command.CommandText = @"
-                SELECT CacheKey, TotalWallets, TotalLiquid, TotalStaked, TotalLocked, TotalDistributed, StatsDate, LastUpdated
+                SELECT CacheKey, TotalWallets, TotalLiquid, TotalStaked, TotalLocked, TotalDistributed, TotalEmitted,
+                       Lock6mCount, Lock12mCount, Lock18mCount, Lock24mCount,
+                       Lock6mAmount, Lock12mAmount, Lock18mAmount, Lock24mAmount,
+                       StatsDate, LastUpdated
                 FROM SummaryCache
                 WHERE CacheKey = 'latest'
                 LIMIT 1
@@ -586,8 +662,17 @@ public class LocalDataSyncService
                         TotalStaked = reader.IsDBNull(3) ? null : reader.GetDecimal(3),
                         TotalLocked = reader.IsDBNull(4) ? null : reader.GetDecimal(4),
                         TotalDistributed = reader.IsDBNull(5) ? null : reader.GetDecimal(5),
-                        StatsDate = reader.IsDBNull(6) ? null : reader.GetString(6),
-                        LastUpdated = reader.IsDBNull(7) ? null : reader.GetDateTime(7)
+                        TotalEmitted = reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                        Lock6mCount = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                        Lock12mCount = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                        Lock18mCount = reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                        Lock24mCount = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+                        Lock6mAmount = reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                        Lock12mAmount = reader.IsDBNull(12) ? null : reader.GetDecimal(12),
+                        Lock18mAmount = reader.IsDBNull(13) ? null : reader.GetDecimal(13),
+                        Lock24mAmount = reader.IsDBNull(14) ? null : reader.GetDecimal(14),
+                        StatsDate = reader.IsDBNull(15) ? null : reader.GetString(15),
+                        LastUpdated = reader.IsDBNull(16) ? null : reader.GetDateTime(16)
                     };
                 }
             }
@@ -599,56 +684,263 @@ public class LocalDataSyncService
     private async Task EnsureSummaryCacheAsync(SqliteConnection connection)
     {
         var checkCommand = connection.CreateCommand();
-        checkCommand.CommandText = "SELECT LastUpdated FROM SummaryCache WHERE CacheKey = 'latest' LIMIT 1";
-        var lastUpdatedObj = await checkCommand.ExecuteScalarAsync();
+        checkCommand.CommandText = @"
+            SELECT
+                LastUpdated,
+                TotalEmitted,
+                (SELECT MAX(LastUpdated) FROM DailyStats),
+                (SELECT MAX(Timestamp) FROM Locks),
+                TotalWallets,
+                TotalStaked,
+                TotalLocked,
+                TotalLiquid,
+                TotalDistributed,
+                (SELECT COUNT(*) FROM DailyStats
+                 WHERE COALESCE(TotalWallets, 0) <> 0
+                    OR COALESCE(TotalLiquid, 0) <> 0
+                    OR COALESCE(TotalStaked, 0) <> 0
+                    OR COALESCE(TotalLocked, 0) <> 0
+                    OR COALESCE(Lock6m, 0) <> 0
+                    OR COALESCE(Lock12m, 0) <> 0
+                    OR COALESCE(Lock18m, 0) <> 0
+                    OR COALESCE(Lock24m, 0) <> 0)
+            FROM SummaryCache
+            WHERE CacheKey = 'latest'
+            LIMIT 1
+        ";
 
-        if (lastUpdatedObj != null && DateTime.TryParse(lastUpdatedObj.ToString(), out var lastUpdated))
+        using (var checkReader = await checkCommand.ExecuteReaderAsync())
         {
-            if (DateTime.UtcNow - lastUpdated.ToUniversalTime() < TimeSpan.FromHours(SummaryCacheHours))
-                return;
+            if (await checkReader.ReadAsync())
+            {
+                var lastUpdatedObj = checkReader.IsDBNull(0) ? null : checkReader.GetValue(0);
+                var hasNewFields = !checkReader.IsDBNull(1);
+                var dailyStatsUpdated = checkReader.IsDBNull(2) ? null : checkReader.GetValue(2);
+                var locksUpdated = checkReader.IsDBNull(3) ? null : checkReader.GetValue(3);
+                var cachedWallets = checkReader.IsDBNull(4) ? 0 : checkReader.GetInt32(4);
+                var cachedStaked = checkReader.IsDBNull(5) ? 0m : checkReader.GetDecimal(5);
+                var cachedLocked = checkReader.IsDBNull(6) ? 0m : checkReader.GetDecimal(6);
+                var cachedLiquid = checkReader.IsDBNull(7) ? 0m : checkReader.GetDecimal(7);
+                var cachedDistributed = checkReader.IsDBNull(8) ? 0m : checkReader.GetDecimal(8);
+                var populatedDailyRows = checkReader.IsDBNull(9) ? 0 : checkReader.GetInt32(9);
+                var cacheIsZeroButDataExists = populatedDailyRows > 0 && cachedWallets == 0 && cachedStaked == 0m && cachedLocked == 0m;
+                var cacheHasMissingFallbackValues = cachedLiquid == 0m || cachedDistributed == 0m;
+
+                if (hasNewFields && lastUpdatedObj != null && DateTime.TryParse(lastUpdatedObj.ToString(), out var lastUpdated))
+                {
+                    var cacheUpdatedUtc = lastUpdated.ToUniversalTime();
+                    var sourcesAreNotNewer =
+                        !IsSourceNewerThanCache(dailyStatsUpdated, cacheUpdatedUtc) &&
+                        !IsSourceNewerThanCache(locksUpdated, cacheUpdatedUtc);
+
+                    if (!cacheIsZeroButDataExists &&
+                        !cacheHasMissingFallbackValues &&
+                        sourcesAreNotNewer &&
+                        DateTime.UtcNow - cacheUpdatedUtc < TimeSpan.FromHours(SummaryCacheHours))
+                        return;
+                }
+            }
         }
 
         var statsCommand = connection.CreateCommand();
         statsCommand.CommandText = @"
-            SELECT Date, TotalWallets, TotalLiquid, TotalStaked, TotalLocked
+            SELECT Date, TotalWallets, TotalLiquid, TotalStaked, TotalLocked,
+                   Lock6m, Lock12m, Lock18m, Lock24m
             FROM DailyStats
+            WHERE COALESCE(TotalWallets, 0) <> 0
+               OR COALESCE(TotalLiquid, 0) <> 0
+               OR COALESCE(TotalStaked, 0) <> 0
+               OR COALESCE(TotalLocked, 0) <> 0
+               OR COALESCE(Lock6m, 0) <> 0
+               OR COALESCE(Lock12m, 0) <> 0
+               OR COALESCE(Lock18m, 0) <> 0
+               OR COALESCE(Lock24m, 0) <> 0
             ORDER BY Date DESC
             LIMIT 1
         ";
+
+        string? statsDate;
+        int totalWallets;
+        decimal totalLiquid;
+        decimal totalStaked;
+        decimal totalLocked;
+        int lock6mCount;
+        int lock12mCount;
+        int lock18mCount;
+        int lock24mCount;
 
         using (var reader = await statsCommand.ExecuteReaderAsync())
         {
             if (!await reader.ReadAsync())
                 return;
 
-            var statsDate = reader.IsDBNull(0) ? null : reader.GetString(0);
-            var totalWallets = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
-            var totalLiquid = reader.IsDBNull(2) ? 0m : reader.GetDecimal(2) / 1_000_000m;
-            var totalStaked = reader.IsDBNull(3) ? 0m : reader.GetDecimal(3) / 1_000_000m;
-            var totalLocked = reader.IsDBNull(4) ? 0m : reader.GetDecimal(4) / 1_000_000m;
-            var totalDistributed = totalLiquid + totalStaked;
-
-            var upsert = connection.CreateCommand();
-            upsert.CommandText = @"
-                INSERT INTO SummaryCache (CacheKey, TotalWallets, TotalLiquid, TotalStaked, TotalLocked, TotalDistributed, StatsDate, LastUpdated)
-                VALUES ('latest', @totalWallets, @totalLiquid, @totalStaked, @totalLocked, @totalDistributed, @statsDate, CURRENT_TIMESTAMP)
-                ON CONFLICT(CacheKey) DO UPDATE SET
-                    TotalWallets = excluded.TotalWallets,
-                    TotalLiquid = excluded.TotalLiquid,
-                    TotalStaked = excluded.TotalStaked,
-                    TotalLocked = excluded.TotalLocked,
-                    TotalDistributed = excluded.TotalDistributed,
-                    StatsDate = excluded.StatsDate,
-                    LastUpdated = CURRENT_TIMESTAMP
-            ";
-            upsert.Parameters.AddWithValue("@totalWallets", totalWallets);
-            upsert.Parameters.AddWithValue("@totalLiquid", totalLiquid);
-            upsert.Parameters.AddWithValue("@totalStaked", totalStaked);
-            upsert.Parameters.AddWithValue("@totalLocked", totalLocked);
-            upsert.Parameters.AddWithValue("@totalDistributed", totalDistributed);
-            upsert.Parameters.AddWithValue("@statsDate", statsDate ?? string.Empty);
-            await upsert.ExecuteNonQueryAsync();
+            statsDate = reader.IsDBNull(0) ? null : reader.GetString(0);
+            totalWallets = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+            totalLiquid = reader.IsDBNull(2) ? 0m : reader.GetDecimal(2) / 1_000_000m;
+            totalStaked = reader.IsDBNull(3) ? 0m : reader.GetDecimal(3) / 1_000_000m;
+            totalLocked = reader.IsDBNull(4) ? 0m : reader.GetDecimal(4);
+            lock6mCount = reader.IsDBNull(5) ? 0 : reader.GetInt32(5);
+            lock12mCount = reader.IsDBNull(6) ? 0 : reader.GetInt32(6);
+            lock18mCount = reader.IsDBNull(7) ? 0 : reader.GetInt32(7);
+            lock24mCount = reader.IsDBNull(8) ? 0 : reader.GetInt32(8);
         }
+
+        var lockAmounts = await GetLockPeriodAmountsAsync(connection);
+        var totalEmitted = await GetDailyStatsSumOptAsync(connection, "EmittedOpt");
+        var totalDistributed = await GetDailyStatsSumOptAsync(connection, "DistributedOpt");
+        var walletTotals = TryGetWalletBalanceCsvTotals();
+
+        if (totalLiquid <= 0m && walletTotals.HasValue)
+            totalLiquid = walletTotals.Value.TotalLiquid;
+
+        if (totalStaked <= 0m && walletTotals.HasValue)
+            totalStaked = walletTotals.Value.TotalStaked;
+
+        if (totalDistributed <= 0m)
+            totalDistributed = totalLiquid + totalStaked;
+
+        var upsert = connection.CreateCommand();
+        upsert.CommandText = @"
+            INSERT INTO SummaryCache (
+                CacheKey, TotalWallets, TotalLiquid, TotalStaked, TotalLocked, TotalDistributed, TotalEmitted,
+                Lock6mCount, Lock12mCount, Lock18mCount, Lock24mCount,
+                Lock6mAmount, Lock12mAmount, Lock18mAmount, Lock24mAmount,
+                StatsDate, LastUpdated
+            )
+            VALUES (
+                'latest', @totalWallets, @totalLiquid, @totalStaked, @totalLocked, @totalDistributed, @totalEmitted,
+                @lock6mCount, @lock12mCount, @lock18mCount, @lock24mCount,
+                @lock6mAmount, @lock12mAmount, @lock18mAmount, @lock24mAmount,
+                @statsDate, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT(CacheKey) DO UPDATE SET
+                TotalWallets = excluded.TotalWallets,
+                TotalLiquid = excluded.TotalLiquid,
+                TotalStaked = excluded.TotalStaked,
+                TotalLocked = excluded.TotalLocked,
+                TotalDistributed = excluded.TotalDistributed,
+                TotalEmitted = excluded.TotalEmitted,
+                Lock6mCount = excluded.Lock6mCount,
+                Lock12mCount = excluded.Lock12mCount,
+                Lock18mCount = excluded.Lock18mCount,
+                Lock24mCount = excluded.Lock24mCount,
+                Lock6mAmount = excluded.Lock6mAmount,
+                Lock12mAmount = excluded.Lock12mAmount,
+                Lock18mAmount = excluded.Lock18mAmount,
+                Lock24mAmount = excluded.Lock24mAmount,
+                StatsDate = excluded.StatsDate,
+                LastUpdated = CURRENT_TIMESTAMP
+        ";
+        upsert.Parameters.AddWithValue("@totalWallets", totalWallets);
+        upsert.Parameters.AddWithValue("@totalLiquid", totalLiquid);
+        upsert.Parameters.AddWithValue("@totalStaked", totalStaked);
+        upsert.Parameters.AddWithValue("@totalLocked", totalLocked);
+        upsert.Parameters.AddWithValue("@totalDistributed", totalDistributed);
+        upsert.Parameters.AddWithValue("@totalEmitted", totalEmitted);
+        upsert.Parameters.AddWithValue("@lock6mCount", lock6mCount);
+        upsert.Parameters.AddWithValue("@lock12mCount", lock12mCount);
+        upsert.Parameters.AddWithValue("@lock18mCount", lock18mCount);
+        upsert.Parameters.AddWithValue("@lock24mCount", lock24mCount);
+        upsert.Parameters.AddWithValue("@lock6mAmount", lockAmounts.Lock6m);
+        upsert.Parameters.AddWithValue("@lock12mAmount", lockAmounts.Lock12m);
+        upsert.Parameters.AddWithValue("@lock18mAmount", lockAmounts.Lock18m);
+        upsert.Parameters.AddWithValue("@lock24mAmount", lockAmounts.Lock24m);
+        upsert.Parameters.AddWithValue("@statsDate", statsDate ?? string.Empty);
+        await upsert.ExecuteNonQueryAsync();
+    }
+
+    private static bool IsSourceNewerThanCache(object? sourceUpdatedObj, DateTime cacheUpdatedUtc)
+    {
+        if (sourceUpdatedObj == null)
+            return false;
+
+        if (!DateTime.TryParse(sourceUpdatedObj.ToString(), out var sourceUpdated))
+            return false;
+
+        return sourceUpdated.ToUniversalTime() > cacheUpdatedUtc;
+    }
+
+    private static async Task<(decimal Lock6m, decimal Lock12m, decimal Lock18m, decimal Lock24m)> GetLockPeriodAmountsAsync(SqliteConnection connection)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var cutoff6m = now.AddMonths(6);
+        var cutoff12m = now.AddMonths(12);
+        var cutoff18m = now.AddMonths(18);
+        var cutoff24m = now.AddMonths(24);
+
+        decimal lock6m = 0m;
+        decimal lock12m = 0m;
+        decimal lock18m = 0m;
+        decimal lock24m = 0m;
+
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT Amount, UnlockTime FROM Locks WHERE UnlockTime IS NOT NULL";
+
+        using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                if (reader.IsDBNull(0) || reader.IsDBNull(1))
+                    continue;
+
+                if (!DateTimeOffset.TryParse(reader.GetValue(1).ToString(), out var unlockTime))
+                    continue;
+
+                var amountOpt = reader.GetDecimal(0) / 1_000_000m;
+                var unlockUtc = unlockTime.ToUniversalTime();
+
+                if (unlockUtc <= cutoff6m)
+                    lock6m += amountOpt;
+                else if (unlockUtc <= cutoff12m)
+                    lock12m += amountOpt;
+                else if (unlockUtc <= cutoff18m)
+                    lock18m += amountOpt;
+                else if (unlockUtc <= cutoff24m)
+                    lock24m += amountOpt;
+            }
+        }
+
+        return (lock6m, lock12m, lock18m, lock24m);
+    }
+
+    private static async Task<decimal> GetDailyStatsSumOptAsync(SqliteConnection connection, string columnName)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COALESCE(SUM({columnName}), 0) FROM DailyStats";
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToDecimal(result ?? 0m) / 1_000_000m;
+    }
+
+    private (decimal TotalLiquid, decimal TotalStaked, decimal TotalUnbonding, int WalletCount)? TryGetWalletBalanceCsvTotals()
+    {
+        var csvPath = Path.Combine(Environment.CurrentDirectory, "wallet-balances.csv");
+        if (!File.Exists(csvPath))
+            return null;
+
+        decimal totalLiquid = 0m;
+        decimal totalStaked = 0m;
+        decimal totalUnbonding = 0m;
+        var walletCount = 0;
+
+        foreach (var line in File.ReadLines(csvPath).Skip(1))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            var parts = line.Split(',');
+            if (parts.Length < 4)
+                continue;
+
+            walletCount++;
+            if (decimal.TryParse(parts[1], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var liquid))
+                totalLiquid += liquid;
+            if (decimal.TryParse(parts[2], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var staked))
+                totalStaked += staked;
+            if (decimal.TryParse(parts[3], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var unbonding))
+                totalUnbonding += unbonding;
+        }
+
+        return (totalLiquid, totalStaked, totalUnbonding, walletCount);
     }
 
     public async Task<List<string>> ValidateDailyStatsAsync()
@@ -737,6 +1029,15 @@ public class SummaryCacheEntry
     public decimal? TotalStaked { get; set; }
     public decimal? TotalLocked { get; set; }
     public decimal? TotalDistributed { get; set; }
+    public decimal? TotalEmitted { get; set; }
+    public int? Lock6mCount { get; set; }
+    public int? Lock12mCount { get; set; }
+    public int? Lock18mCount { get; set; }
+    public int? Lock24mCount { get; set; }
+    public decimal? Lock6mAmount { get; set; }
+    public decimal? Lock12mAmount { get; set; }
+    public decimal? Lock18mAmount { get; set; }
+    public decimal? Lock24mAmount { get; set; }
     public string? StatsDate { get; set; }
     public DateTime? LastUpdated { get; set; }
 }

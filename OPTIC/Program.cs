@@ -33,7 +33,7 @@ if (ParseWebArg(args))
 }
 
 var dailySyncMode = ParseDailySyncArg(args);
-var backfillMode = ParseBackfillArg(args, out var backfillForce);
+var backfillMode = ParseBackfillArg(args, out var backfillForce, out var backfillDays);
 
 bool IsMultiSendSumEarly = ParseMultiSendSumArg(args);
 
@@ -258,7 +258,7 @@ if (dailySyncMode || backfillMode)
     {
         Console.WriteLine("Running daily sync and backfill in parallel...");
         var dailyTask = RunDailySyncAsync();
-        var backfillTask = RunBackfillAsync(http, rpcHttp, channel, denomWantedUpper, lcdBase, rpcBase, backfillForce);
+        var backfillTask = RunBackfillAsync(http, rpcHttp, channel, denomWantedUpper, lcdBase, rpcBase, backfillForce, backfillDays);
         await Task.WhenAll(dailyTask, backfillTask);
     }
     else if (dailySyncMode)
@@ -267,7 +267,7 @@ if (dailySyncMode || backfillMode)
     }
     else
     {
-        await RunBackfillAsync(http, rpcHttp, channel, denomWantedUpper, lcdBase, rpcBase, backfillForce);
+        await RunBackfillAsync(http, rpcHttp, channel, denomWantedUpper, lcdBase, rpcBase, backfillForce, backfillDays);
     }
     return;
 }
@@ -1858,19 +1858,49 @@ static bool ParseDailySyncArg(string[] args)
     return false;
 }
 
-static bool ParseBackfillArg(string[] args, out bool force)
+static bool ParseBackfillArg(string[] args, out bool force, out int? days)
 {
     force = false;
+    days = null;
     foreach (var arg in args)
     {
         if (string.Equals(arg, "--backfill", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(arg, "backfill", StringComparison.OrdinalIgnoreCase))
         {
             force = args.Any(a => string.Equals(a, "--force", StringComparison.OrdinalIgnoreCase));
+            days = ParseBackfillDaysArg(args);
             return true;
         }
     }
     return false;
+}
+
+static int? ParseBackfillDaysArg(string[] args)
+{
+    for (var i = 0; i < args.Length; i++)
+    {
+        var arg = args[i];
+        string? raw = null;
+
+        if (arg.StartsWith("--backfill-days=", StringComparison.OrdinalIgnoreCase))
+            raw = arg["--backfill-days=".Length..].Trim('"');
+        else if (arg.StartsWith("--backfill-last-days=", StringComparison.OrdinalIgnoreCase))
+            raw = arg["--backfill-last-days=".Length..].Trim('"');
+        else if ((string.Equals(arg, "--backfill-days", StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(arg, "--backfill-last-days", StringComparison.OrdinalIgnoreCase)) &&
+                 i + 1 < args.Length)
+            raw = args[i + 1].Trim('"');
+
+        if (raw is null)
+            continue;
+
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) || days <= 0)
+            throw new ArgumentException("--backfill-days must be a positive whole number.");
+
+        return days;
+    }
+
+    return null;
 }
 
 static async Task RunDailySyncAsync()
@@ -1908,7 +1938,8 @@ static async Task RunBackfillAsync(
     string denomWantedUpper,
     string? lcdBase,
     string? rpcBase,
-    bool backfillForce)
+    bool backfillForce,
+    int? backfillDays)
 {
     Console.WriteLine("OPTIC - Daily Stats Backfill (Block Scanner)");
     try
@@ -1959,6 +1990,23 @@ static async Task RunBackfillAsync(
         Console.WriteLine($"Latest block height: {latestHeight}");
 
         long startBlock = 0;
+        if (backfillDays.HasValue)
+        {
+            var cutoffDate = DateTime.UtcNow.Date.AddDays(-(backfillDays.Value - 1));
+            Console.WriteLine($"Limiting backfill to the past {backfillDays.Value:N0} day{(backfillDays.Value == 1 ? "" : "s")} (from {cutoffDate:yyyy-MM-dd} UTC).");
+
+            var boundedStartBlock = await FindFirstBlockOnOrAfterAsync(http, latestHeight, cutoffDate, CancellationToken.None);
+            if (boundedStartBlock.HasValue)
+            {
+                startBlock = boundedStartBlock.Value;
+                Console.WriteLine($"First block in requested window: {startBlock:N0}");
+            }
+            else
+            {
+                Console.WriteLine("Warning: Could not locate cutoff block; falling back to normal backfill start.");
+            }
+        }
+
         if (!backfillForce)
         {
             var existingData = await syncService.GetAllDailyStatsAsync();
@@ -1967,7 +2015,7 @@ static async Task RunBackfillAsync(
                 var lastDate = existingData.OrderByDescending(x => x.Date).First();
                 Console.WriteLine($"Found existing data up to {lastDate.Date}, will scan from next day.");
                 if (lastDate.EndBlockNumber.HasValue)
-                    startBlock = lastDate.EndBlockNumber.Value + 1;
+                    startBlock = Math.Max(startBlock, lastDate.EndBlockNumber.Value + 1);
             }
         }
 
@@ -2036,6 +2084,64 @@ static async Task RunBackfillAsync(
         if (ex.InnerException != null)
             Console.WriteLine($"Details: {ex.InnerException.Message}");
     }
+}
+
+static async Task<long?> FindFirstBlockOnOrAfterAsync(HttpClient http, long latestHeight, DateTime cutoffUtc, CancellationToken ct)
+{
+    if (latestHeight <= 0)
+        return null;
+
+    var latestTime = await TryGetBlockTimeUtcAsync(http, latestHeight, ct);
+    if (!latestTime.HasValue)
+        return null;
+
+    if (latestTime.Value.Date < cutoffUtc.Date)
+        return latestHeight;
+
+    long low = 1;
+    long high = latestHeight;
+    long? answer = null;
+
+    while (low <= high)
+    {
+        var mid = low + ((high - low) / 2);
+        var blockTime = await TryGetBlockTimeUtcAsync(http, mid, ct);
+        if (!blockTime.HasValue)
+        {
+            low = mid + 1;
+            continue;
+        }
+
+        if (blockTime.Value >= cutoffUtc)
+        {
+            answer = mid;
+            high = mid - 1;
+        }
+        else
+        {
+            low = mid + 1;
+        }
+    }
+
+    return answer;
+}
+
+static async Task<DateTime?> TryGetBlockTimeUtcAsync(HttpClient http, long blockHeight, CancellationToken ct)
+{
+    var blockDoc = await ServiceUtils.TryGetJsonAsync(http, $"cosmos/base/tendermint/v1beta1/blocks/{blockHeight}", ct);
+    if (blockDoc is null)
+        return null;
+
+    if (!blockDoc.RootElement.TryGetProperty("block", out var blockEl) ||
+        !blockEl.TryGetProperty("header", out var headerEl) ||
+        !headerEl.TryGetProperty("time", out var timeEl))
+        return null;
+
+    var timeText = timeEl.GetString();
+    if (!DateTimeOffset.TryParse(timeText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+        return null;
+
+    return parsed.UtcDateTime;
 }
 
 static bool ParseDistributionsArg(string[] args, out string? addrOverride)
@@ -2146,11 +2252,15 @@ static bool ParseSendRecvArg(string[] args, out string? addrOverride)
 static bool ParseWalletLocksSummaryArg(string[] args, out string? addrOverride)
 {
     addrOverride = null;
+    var found = false;
     foreach (var arg in args)
     {
         if (string.Equals(arg, "--wallet-locks-summary", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(arg, "wallet-locks-summary", StringComparison.OrdinalIgnoreCase))
-            return true;
+        {
+            found = true;
+            continue;
+        }
 
         if (arg.StartsWith("--wallet-locks-summary=", StringComparison.OrdinalIgnoreCase))
         {
@@ -2171,7 +2281,7 @@ static bool ParseWalletLocksSummaryArg(string[] args, out string? addrOverride)
         }
     }
 
-    return false;
+    return found;
 }
 
 static int? ParseSendRecvHoursArg(string[] args)
@@ -2875,6 +2985,8 @@ static void PrintHelp()
     Console.WriteLine("      Record today's daily statistics to SQLite database.");
     Console.WriteLine("  --backfill | backfill");
     Console.WriteLine("      Fill missing daily statistics from first transaction to today.");
+    Console.WriteLine("  --backfill-days <days>");
+    Console.WriteLine("      With --backfill, only scan the past N UTC days.");
     Console.WriteLine("  --force");
     Console.WriteLine("      With --backfill, recompute existing dates (overwrite).");
     Console.WriteLine();

@@ -1,11 +1,26 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
+using System.Numerics;
+using System.Text.Json;
+using Cosmos.Base.Abci.V1Beta1;
+using Cosmos.Base.Query.V1Beta1;
+using Cosmos.Tx.V1Beta1;
+using Google.Protobuf;
+using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
 using OPTIC.Services;
 
 public static class WebDashboard
 {
+    private const string HistoricalEmissionDepositAddress = "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
+    private static decimal? _historicalEmissionDepositCache;
+    private static DateTimeOffset _historicalEmissionDepositCacheTime;
+    private static List<TopWalletEntry>? _top100WalletCache;
+    private static DateTimeOffset _top100WalletCacheTime;
+
     public static async Task RunAsync(string host, int port)
     {
         var url = $"http://{host}:{port}";
@@ -170,6 +185,12 @@ public static class WebDashboard
             try
             {
                 var summary = await syncService.GetSummaryCacheAsync();
+                if (summary != null)
+                {
+                    summary.TotalEmitted = await GetHistoricalEmissionDepositsAsync();
+                    await PopulateLiveLockBucketsIfNeededAsync(summary);
+                }
+
                 ctx.Response.ContentType = "application/json; charset=utf-8";
                 return Results.Json(new
                 {
@@ -180,6 +201,15 @@ public static class WebDashboard
                         totalStaked = summary.TotalStaked,
                         totalLocked = summary.TotalLocked,
                         totalDistributed = summary.TotalDistributed,
+                        totalEmitted = summary.TotalEmitted,
+                        lock6mCount = summary.Lock6mCount,
+                        lock12mCount = summary.Lock12mCount,
+                        lock18mCount = summary.Lock18mCount,
+                        lock24mCount = summary.Lock24mCount,
+                        lock6mAmount = summary.Lock6mAmount,
+                        lock12mAmount = summary.Lock12mAmount,
+                        lock18mAmount = summary.Lock18mAmount,
+                        lock24mAmount = summary.Lock24mAmount,
                         statsDate = summary.StatsDate,
                         lastUpdated = summary.LastUpdated
                     }
@@ -193,8 +223,872 @@ public static class WebDashboard
             }
         });
 
+        app.MapGet("/api/top100", async (HttpContext ctx) =>
+        {
+            try
+            {
+                var wallets = await GetTop100WalletsAsync();
+                ctx.Response.ContentType = "application/json; charset=utf-8";
+                return Results.Json(new
+                {
+                    wallets = wallets.Select(w => new
+                    {
+                        rank = w.Rank,
+                        address = w.Address,
+                        walletBalance = w.WalletBalance,
+                        staked = w.Staked,
+                        unbonding = w.Unbonding,
+                        lock6Months = w.Lock6Months,
+                        lock12Months = w.Lock12Months,
+                        lock18Months = w.Lock18Months,
+                        lock24Months = w.Lock24Months,
+                        totalLocked = w.TotalLocked,
+                        total = w.Total
+                    }),
+                    lastUpdated = _top100WalletCacheTime
+                });
+            }
+            catch (Exception ex)
+            {
+                ctx.Response.ContentType = "application/json; charset=utf-8";
+                return Results.Json(new { error = ex.Message }, statusCode: 500);
+            }
+        });
+
         Console.WriteLine($"Starting OPTIC web dashboard at {url}");
         await app.RunAsync($"http://{host}:{port}");
+    }
+
+    static async Task<decimal> GetHistoricalEmissionDepositsAsync()
+    {
+        if (_historicalEmissionDepositCache.HasValue &&
+            DateTimeOffset.UtcNow - _historicalEmissionDepositCacheTime < TimeSpan.FromHours(12))
+        {
+            return _historicalEmissionDepositCache.Value;
+        }
+
+        try
+        {
+            var cfg = LoadDashboardConfig();
+            var rpcBase = cfg.GetValueOrDefault("rpc", "http://127.0.0.1:26657");
+            var denom = cfg.GetValueOrDefault("denom", "uopt");
+            var denomWantedUpper = denom.ToUpperInvariant();
+            var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1;
+            var pageLimit = TryParseConfigInt(cfg, "pageLimit", 100);
+            var maxPages = TryParseConfigInt(cfg, "maxPages", 50000);
+
+            if (pageLimit <= 0) pageLimit = 100;
+            if (pageLimit > 100) pageLimit = 100;
+            if (maxPages <= 0) maxPages = 50000;
+
+            using var rpcHttp = new HttpClient
+            {
+                BaseAddress = new Uri(rpcBase.TrimEnd('/') + "/"),
+                Timeout = TimeSpan.FromSeconds(30)
+            };
+
+            var totalUopt = await SumHistoricalReceivesFromRpcAsync(
+                rpcHttp,
+                $"coin_received.receiver='{HistoricalEmissionDepositAddress}'",
+                HistoricalEmissionDepositAddress,
+                denomWantedUpper,
+                pageLimit,
+                maxPages);
+
+            if (totalUopt <= BigInteger.Zero)
+            {
+                totalUopt = await SumHistoricalReceivesFromRpcAsync(
+                    rpcHttp,
+                    $"transfer.recipient='{HistoricalEmissionDepositAddress}'",
+                    HistoricalEmissionDepositAddress,
+                    denomWantedUpper,
+                    pageLimit,
+                    maxPages);
+            }
+
+            var totalOpt = ToDecimalOpt(totalUopt, scaleInt);
+            _historicalEmissionDepositCache = totalOpt;
+            _historicalEmissionDepositCacheTime = DateTimeOffset.UtcNow;
+            return totalOpt;
+        }
+        catch
+        {
+            return _historicalEmissionDepositCache ?? 0m;
+        }
+    }
+
+    static async Task<BigInteger> SumHistoricalReceivesFromRpcAsync(
+        HttpClient rpcHttp,
+        string query,
+        string recipient,
+        string denomWantedUpper,
+        int pageLimit,
+        int maxPages)
+    {
+        BigInteger total = BigInteger.Zero;
+        var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var perPage = Math.Clamp(pageLimit, 1, 100);
+        var pages = Math.Clamp(maxPages, 1, 1000);
+
+        for (var page = 1; page <= pages; page++)
+        {
+            var payload = new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tx_search",
+                @params = new
+                {
+                    query,
+                    page = page.ToString(CultureInfo.InvariantCulture),
+                    per_page = perPage.ToString(CultureInfo.InvariantCulture),
+                    order_by = "desc",
+                    prove = false
+                }
+            };
+
+            using var content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            using var response = await rpcHttp.PostAsync("", content);
+
+            if (!response.IsSuccessStatusCode)
+                break;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("txs", out var txs) ||
+                txs.ValueKind != JsonValueKind.Array)
+                break;
+
+            var count = 0;
+            foreach (var tx in txs.EnumerateArray())
+            {
+                count++;
+                var hash = tx.TryGetProperty("hash", out var hashEl) ? hashEl.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(hash) && !seenHashes.Add(hash))
+                    continue;
+
+                total += SumReceiveEventsFromTxSearchResult(tx, recipient, denomWantedUpper);
+            }
+
+            if (count < perPage)
+                break;
+        }
+
+        return total;
+    }
+
+    static BigInteger SumReceiveEventsFromTxSearchResult(JsonElement tx, string recipient, string denomWantedUpper)
+    {
+        if (!tx.TryGetProperty("tx_result", out var txResult) ||
+            !txResult.TryGetProperty("events", out var events) ||
+            events.ValueKind != JsonValueKind.Array)
+            return BigInteger.Zero;
+
+        BigInteger total = BigInteger.Zero;
+        foreach (var ev in events.EnumerateArray())
+        {
+            var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
+            if (!string.Equals(type, "coin_received", StringComparison.Ordinal) &&
+                !string.Equals(type, "transfer", StringComparison.Ordinal))
+                continue;
+
+            var attrs = ReadCometEventAttributes(ev);
+            if (string.Equals(type, "coin_received", StringComparison.Ordinal))
+            {
+                foreach (var entry in ParseCoinEventTuples(attrs, "receiver", denomWantedUpper))
+                {
+                    if (entry.Party.Equals(recipient, StringComparison.OrdinalIgnoreCase))
+                        total += entry.AmountUnits;
+                }
+            }
+            else
+            {
+                foreach (var entry in ParseTransferEventTuples(attrs, denomWantedUpper))
+                {
+                    if (entry.Recipient.Equals(recipient, StringComparison.OrdinalIgnoreCase))
+                        total += entry.AmountUnits;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    static List<(string Key, string Value)> ReadCometEventAttributes(JsonElement ev)
+    {
+        var attrs = new List<(string Key, string Value)>();
+        if (!ev.TryGetProperty("attributes", out var attrArray) || attrArray.ValueKind != JsonValueKind.Array)
+            return attrs;
+
+        foreach (var attr in attrArray.EnumerateArray())
+        {
+            var key = attr.TryGetProperty("key", out var keyEl) ? keyEl.GetString() ?? "" : "";
+            var value = attr.TryGetProperty("value", out var valueEl) ? valueEl.GetString() ?? "" : "";
+            key = DecodeBase64Maybe(key);
+            value = DecodeBase64Maybe(value);
+            if (key.Length > 0)
+                attrs.Add((key, value));
+        }
+
+        return attrs;
+    }
+
+    static async Task<BigInteger> SumHistoricalReceivesAsync(
+        Service.ServiceClient txClient,
+        string query,
+        string recipient,
+        string denomWantedUpper,
+        int pageLimit,
+        int maxPages,
+        bool useCoinReceivedEvents)
+    {
+        BigInteger total = BigInteger.Zero;
+        var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        byte[]? key = null;
+        ulong offset = 0;
+        var useOffset = false;
+
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var req = new GetTxsEventRequest { Query = query };
+
+#pragma warning disable CS0612
+            var pagination = new PageRequest
+            {
+                Limit = (ulong)pageLimit,
+                CountTotal = false
+            };
+
+            if (useOffset)
+                pagination.Offset = offset;
+            else if (key is { Length: > 0 })
+                pagination.Key = ByteString.CopyFrom(key);
+
+            req.Pagination = pagination;
+#pragma warning restore CS0612
+
+            GetTxsEventResponse response;
+            try
+            {
+                response = await txClient.GetTxsEventAsync(req);
+            }
+            catch
+            {
+                break;
+            }
+
+            if (response.TxResponses.Count == 0)
+                break;
+
+            foreach (var tx in response.TxResponses)
+            {
+                var hash = tx.Txhash ?? "";
+                if (hash.Length > 0 && !seenHashes.Add(hash))
+                    continue;
+
+                total += useCoinReceivedEvents
+                    ? SumCoinReceivedByRecipient(tx, recipient, denomWantedUpper)
+                    : SumTransfersByRecipient(tx, recipient, denomWantedUpper);
+            }
+
+#pragma warning disable CS0612
+            var nextKey = response.Pagination?.NextKey;
+#pragma warning restore CS0612
+
+            if (nextKey is { Length: > 0 })
+            {
+                key = nextKey.ToByteArray();
+                continue;
+            }
+
+            if (response.TxResponses.Count == pageLimit)
+            {
+                useOffset = true;
+                offset += (ulong)pageLimit;
+                continue;
+            }
+
+            break;
+        }
+
+        return total;
+    }
+
+    static BigInteger SumCoinReceivedByRecipient(TxResponse tx, string recipient, string denomWantedUpper)
+    {
+        BigInteger total = BigInteger.Zero;
+
+        foreach (var ev in tx.Events)
+        {
+            if (!string.Equals(ev.Type, "coin_received", StringComparison.Ordinal))
+                continue;
+
+            var attrs = ev.Attributes
+                .Select(a => (Key: a.Key ?? "", Value: a.Value ?? ""))
+                .ToList();
+
+            foreach (var entry in ParseCoinEventTuples(attrs, "receiver", denomWantedUpper))
+            {
+                if (entry.Party.Equals(recipient, StringComparison.OrdinalIgnoreCase))
+                    total += entry.AmountUnits;
+            }
+        }
+
+        return total;
+    }
+
+    static BigInteger SumTransfersByRecipient(TxResponse tx, string recipient, string denomWantedUpper)
+    {
+        BigInteger total = BigInteger.Zero;
+
+        foreach (var ev in tx.Events)
+        {
+            if (!string.Equals(ev.Type, "transfer", StringComparison.Ordinal))
+                continue;
+
+            var attrs = ev.Attributes
+                .Select(a => (Key: a.Key ?? "", Value: a.Value ?? ""))
+                .ToList();
+
+            foreach (var entry in ParseTransferEventTuples(attrs, denomWantedUpper))
+            {
+                if (entry.Recipient.Equals(recipient, StringComparison.OrdinalIgnoreCase))
+                    total += entry.AmountUnits;
+            }
+        }
+
+        return total;
+    }
+
+    static List<(string Party, BigInteger AmountUnits)> ParseCoinEventTuples(
+        List<(string Key, string Value)> attrs,
+        string partyKey,
+        string denomWantedUpper)
+    {
+        var entries = new List<(string Party, BigInteger AmountUnits)>();
+        var parties = new List<string>();
+        var amountStrings = new List<string>();
+
+        foreach (var (key, value) in attrs)
+        {
+            if (key == partyKey && !string.IsNullOrWhiteSpace(value))
+                parties.Add(value);
+            else if (key == "amount" && !string.IsNullOrWhiteSpace(value))
+                amountStrings.Add(value);
+        }
+
+        var count = Math.Min(parties.Count == 1 ? amountStrings.Count : parties.Count, amountStrings.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var party = parties.Count == 1 ? parties[0] : parties[i];
+            var amount = ParseAmountFieldUopt(amountStrings[i], denomWantedUpper);
+            if (amount > BigInteger.Zero)
+                entries.Add((party, amount));
+        }
+
+        return entries;
+    }
+
+    static List<(string Sender, string Recipient, BigInteger AmountUnits)> ParseTransferEventTuples(
+        List<(string Key, string Value)> attrs,
+        string denomWantedUpper)
+    {
+        var entries = new List<(string Sender, string Recipient, BigInteger AmountUnits)>();
+        var senders = new List<string>();
+        var recipients = new List<string>();
+        var amountStrings = new List<string>();
+
+        foreach (var (key, value) in attrs)
+        {
+            if (key == "sender" && !string.IsNullOrWhiteSpace(value))
+                senders.Add(value);
+            else if (key == "recipient" && !string.IsNullOrWhiteSpace(value))
+                recipients.Add(value);
+            else if (key == "amount" && !string.IsNullOrWhiteSpace(value))
+                amountStrings.Add(value);
+        }
+
+        var count = Math.Min(Math.Min(senders.Count, recipients.Count), amountStrings.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var amount = ParseAmountFieldUopt(amountStrings[i], denomWantedUpper);
+            if (amount > BigInteger.Zero)
+                entries.Add((senders[i], recipients[i], amount));
+        }
+
+        return entries;
+    }
+
+    static BigInteger ParseAmountFieldUopt(string amountField, string denomWantedUpper)
+    {
+        if (string.IsNullOrWhiteSpace(amountField))
+            return BigInteger.Zero;
+
+        BigInteger total = BigInteger.Zero;
+        foreach (var part in amountField.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (TryParseSingleCoinUopt(part, denomWantedUpper, out var amountUnits))
+                total += amountUnits;
+        }
+
+        return total;
+    }
+
+    static bool TryParseSingleCoinUopt(string part, string denomWantedUpper, out BigInteger amountUnits)
+    {
+        amountUnits = BigInteger.Zero;
+        if (string.IsNullOrWhiteSpace(part))
+            return false;
+
+        var trimmed = part.Trim();
+        var i = 0;
+        if (trimmed[0] == '-')
+            i = 1;
+
+        for (; i < trimmed.Length; i++)
+        {
+            if (!char.IsDigit(trimmed[i]))
+                break;
+        }
+
+        if (i == 0 || i >= trimmed.Length)
+            return false;
+
+        var denom = trimmed[i..];
+        if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal))
+            return false;
+
+        return BigInteger.TryParse(trimmed[..i].Replace("_", ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out amountUnits);
+    }
+
+    static string DecodeBase64Maybe(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return value;
+
+        try
+        {
+            var normalized = value.Trim();
+            var mod = normalized.Length % 4;
+            if (mod != 0)
+                normalized += new string('=', 4 - mod);
+
+            var bytes = Convert.FromBase64String(normalized);
+            var decoded = System.Text.Encoding.UTF8.GetString(bytes);
+            return IsMostlyPrintable(decoded) ? decoded : value;
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
+    static bool IsMostlyPrintable(string value)
+    {
+        foreach (var ch in value)
+        {
+            if (ch is '\r' or '\n' or '\t')
+                continue;
+            if (ch < 32 || ch > 126)
+                return false;
+        }
+
+        return value.Length > 0;
+    }
+
+    static decimal ToDecimalOpt(BigInteger amountUnits, int scaleInt)
+    {
+        if (amountUnits <= BigInteger.Zero || scaleInt <= 0)
+            return 0m;
+
+        return (decimal)amountUnits / scaleInt;
+    }
+
+    static int TryParseConfigInt(Dictionary<string, string> cfg, string key, int defaultValue)
+    {
+        return int.TryParse(cfg.GetValueOrDefault(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : defaultValue;
+    }
+
+    static async Task PopulateLiveLockBucketsIfNeededAsync(SummaryCacheEntry summary)
+    {
+        var hasLockBuckets =
+            (summary.Lock6mAmount ?? 0m) > 0m ||
+            (summary.Lock12mAmount ?? 0m) > 0m ||
+            (summary.Lock18mAmount ?? 0m) > 0m ||
+            (summary.Lock24mAmount ?? 0m) > 0m ||
+            (summary.Lock6mCount ?? 0) > 0 ||
+            (summary.Lock12mCount ?? 0) > 0 ||
+            (summary.Lock18mCount ?? 0) > 0 ||
+            (summary.Lock24mCount ?? 0) > 0;
+
+        if (hasLockBuckets)
+            return;
+
+        try
+        {
+            var cfg = LoadDashboardConfig();
+            var grpcTarget = cfg.GetValueOrDefault("grpc", "127.0.0.1:9090");
+            var lcdBase = cfg.GetValueOrDefault("lcd", "http://127.0.0.1:1317");
+            var denom = cfg.GetValueOrDefault("denom", "uopt");
+            var denomWantedUpper = denom.ToUpperInvariant();
+            var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1;
+
+            using var http = new HttpClient
+            {
+                BaseAddress = new Uri(lcdBase.TrimEnd('/') + "/"),
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+            using var channel = GrpcChannel.ForAddress($"http://{grpcTarget}");
+
+            var lockService = new LockService(http, channel);
+            var lockRows = await lockService.GetAllActiveLockRowsAsync(denomWantedUpper, scaleInt, CancellationToken.None);
+            if (lockRows.Count == 0)
+                return;
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var row in lockRows)
+            {
+                var months = GetRemainingMonths(row.EndTime, now);
+                if (months <= 6)
+                {
+                    summary.Lock6mCount = (summary.Lock6mCount ?? 0) + 1;
+                    summary.Lock6mAmount = (summary.Lock6mAmount ?? 0m) + row.AmountOpt;
+                }
+                else if (months <= 12)
+                {
+                    summary.Lock12mCount = (summary.Lock12mCount ?? 0) + 1;
+                    summary.Lock12mAmount = (summary.Lock12mAmount ?? 0m) + row.AmountOpt;
+                }
+                else if (months <= 18)
+                {
+                    summary.Lock18mCount = (summary.Lock18mCount ?? 0) + 1;
+                    summary.Lock18mAmount = (summary.Lock18mAmount ?? 0m) + row.AmountOpt;
+                }
+                else if (months <= 24)
+                {
+                    summary.Lock24mCount = (summary.Lock24mCount ?? 0) + 1;
+                    summary.Lock24mAmount = (summary.Lock24mAmount ?? 0m) + row.AmountOpt;
+                }
+            }
+        }
+        catch
+        {
+            // Keep local-cache values if the live lockup endpoint is unavailable.
+        }
+    }
+
+    static async Task<List<TopWalletEntry>> GetTop100WalletsAsync()
+    {
+        if (_top100WalletCache is not null &&
+            DateTimeOffset.UtcNow - _top100WalletCacheTime < TimeSpan.FromMinutes(10))
+        {
+            return _top100WalletCache;
+        }
+
+        var entries = LoadWalletBalanceEntries();
+        var lockBuckets = await GetTopWalletLockBucketsAsync();
+
+        foreach (var (address, buckets) in lockBuckets)
+        {
+            if (!entries.TryGetValue(address, out var entry))
+            {
+                entry = new TopWalletEntry { Address = address };
+                entries[address] = entry;
+            }
+
+            entry.Lock6Months = buckets.Length > 0 ? buckets[0] : 0m;
+            entry.Lock12Months = buckets.Length > 1 ? buckets[1] : 0m;
+            entry.Lock18Months = buckets.Length > 2 ? buckets[2] : 0m;
+            entry.Lock24Months = buckets.Length > 3 ? buckets[3] : 0m;
+        }
+
+        await EnrichTopWalletEntriesAsync(entries.Values.Where(w => w.TotalLocked > 0m));
+
+        var result = entries.Values
+            .OrderByDescending(w => w.Total)
+            .ThenBy(w => w.Address, StringComparer.OrdinalIgnoreCase)
+            .Take(100)
+            .Select((w, i) =>
+            {
+                w.Rank = i + 1;
+                return w;
+            })
+            .ToList();
+
+        _top100WalletCache = result;
+        _top100WalletCacheTime = DateTimeOffset.UtcNow;
+        return result;
+    }
+
+    static async Task EnrichTopWalletEntriesAsync(IEnumerable<TopWalletEntry> entries)
+    {
+        var targets = entries
+            .Where(e => !string.IsNullOrWhiteSpace(e.Address))
+            .ToList();
+
+        if (targets.Count == 0)
+            return;
+
+        try
+        {
+            var cfg = LoadDashboardConfig();
+            var lcdBase = cfg.GetValueOrDefault("lcd", "http://127.0.0.1:1317");
+            var denom = cfg.GetValueOrDefault("denom", "uopt");
+            var denomWantedUpper = denom.ToUpperInvariant();
+            var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000m : 1m;
+
+            using var http = new HttpClient
+            {
+                BaseAddress = new Uri(lcdBase.TrimEnd('/') + "/"),
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+
+            var bankService = new BankService(http);
+            var stakingService = new StakingService(http);
+            using var gate = new SemaphoreSlim(12);
+            var tasks = targets.Select(async entry =>
+            {
+                await gate.WaitAsync();
+                try
+                {
+                    var walletUnits = await bankService.GetBalanceAsync(entry.Address, denomWantedUpper, CancellationToken.None);
+                    var stakedUnits = await stakingService.GetDelegationTotalAsync(entry.Address, CancellationToken.None);
+                    var unbondingUnits = await stakingService.GetUnbondingTotalAsync(entry.Address, CancellationToken.None);
+
+                    entry.WalletBalance = walletUnits / scaleInt;
+                    entry.Staked = stakedUnits / scaleInt;
+                    entry.Unbonding = unbondingUnits / scaleInt;
+                }
+                catch
+                {
+                    // Keep CSV-derived values if live enrichment fails for this row.
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
+        }
+        catch
+        {
+            // Top 100 should still render from CSV and lock data if live enrichment is unavailable.
+        }
+    }
+
+    static Dictionary<string, TopWalletEntry> LoadWalletBalanceEntries()
+    {
+        var entries = new Dictionary<string, TopWalletEntry>(StringComparer.OrdinalIgnoreCase);
+        var csvPath = Path.Combine(Environment.CurrentDirectory, "wallet-balances.csv");
+        if (!File.Exists(csvPath))
+            return entries;
+
+        var isHeader = true;
+        foreach (var line in File.ReadLines(csvPath))
+        {
+            if (isHeader)
+            {
+                isHeader = false;
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            var parts = SplitCsvLine(line);
+            if (parts.Count < 4 || string.IsNullOrWhiteSpace(parts[0]))
+                continue;
+
+            entries[parts[0].Trim()] = new TopWalletEntry
+            {
+                Address = parts[0].Trim(),
+                WalletBalance = ParseInvariantDecimal(parts[1]),
+                Staked = ParseInvariantDecimal(parts[2]),
+                Unbonding = ParseInvariantDecimal(parts[3])
+            };
+        }
+
+        return entries;
+    }
+
+    static async Task<Dictionary<string, decimal[]>> GetTopWalletLockBucketsAsync()
+    {
+        try
+        {
+            var cfg = LoadDashboardConfig();
+            var grpcTarget = cfg.GetValueOrDefault("grpc", "127.0.0.1:9090");
+            var lcdBase = cfg.GetValueOrDefault("lcd", "http://127.0.0.1:1317");
+            var denom = cfg.GetValueOrDefault("denom", "uopt");
+            var denomWantedUpper = denom.ToUpperInvariant();
+            var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1;
+
+            using var http = new HttpClient
+            {
+                BaseAddress = new Uri(lcdBase.TrimEnd('/') + "/"),
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+            using var channel = GrpcChannel.ForAddress($"http://{grpcTarget}");
+
+            var lockService = new LockService(http, channel);
+            var buckets = await lockService.GetAllActiveLockBucketsAsync(
+                denomWantedUpper,
+                scaleInt,
+                DateTimeOffset.UtcNow,
+                CancellationToken.None);
+
+            if (buckets.Count > 0)
+                return buckets;
+        }
+        catch
+        {
+            // Fall back to the local SQLite lock cache below.
+        }
+
+        return await GetTopWalletLockBucketsFromDbAsync();
+    }
+
+    static async Task<Dictionary<string, decimal[]>> GetTopWalletLockBucketsFromDbAsync()
+    {
+        var bucketsByAddress = new Dictionary<string, decimal[]>(StringComparer.OrdinalIgnoreCase);
+        var dbPath = Path.Combine(Environment.CurrentDirectory, "odata", "optic.db");
+        if (!File.Exists(dbPath))
+            return bucketsByAddress;
+
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT Address, Amount, UnlockTime FROM Locks WHERE UnlockTime IS NOT NULL";
+        using var reader = await command.ExecuteReaderAsync();
+        var now = DateTimeOffset.UtcNow;
+        while (await reader.ReadAsync())
+        {
+            var address = reader.IsDBNull(0) ? "" : reader.GetString(0);
+            if (string.IsNullOrWhiteSpace(address))
+                continue;
+
+            var amountRaw = reader.IsDBNull(1) ? 0m : reader.GetDecimal(1);
+            var amount = amountRaw > 10_000_000m ? amountRaw / 1_000_000m : amountRaw;
+            if (amount <= 0m)
+                continue;
+
+            if (!TryReadDateTimeOffset(reader.GetValue(2), out var unlockTime))
+                continue;
+
+            var months = GetRemainingMonths(unlockTime, now);
+            var bucket = months <= 6 ? 0 : months <= 12 ? 1 : months <= 18 ? 2 : months <= 24 ? 3 : -1;
+            if (bucket < 0)
+                continue;
+
+            if (!bucketsByAddress.TryGetValue(address, out var buckets))
+            {
+                buckets = new decimal[4];
+                bucketsByAddress[address] = buckets;
+            }
+
+            buckets[bucket] += amount;
+        }
+
+        return bucketsByAddress;
+    }
+
+    static bool TryReadDateTimeOffset(object value, out DateTimeOffset date)
+    {
+        date = default;
+        if (value is DateTime dt)
+        {
+            date = new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc));
+            return true;
+        }
+
+        var text = Convert.ToString(value, CultureInfo.InvariantCulture);
+        return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out date);
+    }
+
+    static decimal ParseInvariantDecimal(string value)
+    {
+        return decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 0m;
+    }
+
+    static List<string> SplitCsvLine(string line)
+    {
+        var values = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inQuotes = false;
+
+        for (var i = 0; i < line.Length; i++)
+        {
+            var ch = line[i];
+            if (ch == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    current.Append('"');
+                    i++;
+                }
+                else
+                {
+                    inQuotes = !inQuotes;
+                }
+            }
+            else if (ch == ',' && !inQuotes)
+            {
+                values.Add(current.ToString());
+                current.Clear();
+            }
+            else
+            {
+                current.Append(ch);
+            }
+        }
+
+        values.Add(current.ToString());
+        return values;
+    }
+
+    static Dictionary<string, string> LoadDashboardConfig()
+    {
+        var configPath = Path.Combine(Environment.CurrentDirectory, "optic.conf");
+        var cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(configPath))
+            return cfg;
+
+        foreach (var rawLine in File.ReadLines(configPath))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
+                continue;
+
+            var idx = line.IndexOf('=');
+            if (idx <= 0)
+                continue;
+
+            cfg[line[..idx].Trim()] = line[(idx + 1)..].Trim();
+        }
+
+        return cfg;
+    }
+
+    static int GetRemainingMonths(DateTimeOffset endTime, DateTimeOffset nowUtc)
+    {
+        if (endTime <= nowUtc)
+            return 0;
+
+        var months = ((endTime.Year - nowUtc.Year) * 12) + endTime.Month - nowUtc.Month;
+        if (endTime.Day > nowUtc.Day)
+            months++;
+
+        return Math.Max(0, months);
     }
 
     static string GetPageTitle(string page)
@@ -202,6 +1096,7 @@ public static class WebDashboard
         return page switch
         {
             "dashboard" => "Dashboard",
+            "top100" => "Top 100",
             "distributions" => "Distributions & Ledger",
             "locks" => "Locks & Staking",
             "counterparties" => "Counterparties",
@@ -246,23 +1141,31 @@ public static class WebDashboard
 <head>
     <meta charset=""UTF-8"">
     <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
-    <title>Dashboard</title>
+    <title>OPTIC Dashboard</title>
     <link rel=""icon"" type=""image/png"" href=""/images/optic-icon.png"">
     <style>
         :root {
-            --bg-primary: #0a0e27;
-            --bg-secondary: #0f1535;
-            --surface: #1a2540;
-            --surface-light: #243456;
-            --border: #2d3e5f;
-            --text-primary: #e4e6eb;
-            --text-secondary: #a0a8b8;
-            --accent-primary: #10b981;
-            --accent-secondary: #059669;
-            --accent-light: #a7f3d0;
-            --error: #ef4444;
-            --warning: #f97316;
-            --info: #3b82f6;
+            color-scheme: light;
+            --bg-primary: #f3f2f1;
+            --bg-secondary: #ffffff;
+            --surface: #ffffff;
+            --surface-light: #faf9f8;
+            --surface-elevated: #ffffff;
+            --border: #d2d0ce;
+            --border-strong: #8a8886;
+            --text-primary: #1b1a19;
+            --text-secondary: #323130;
+            --text-muted: #605e5c;
+            --accent-primary: #0078d4;
+            --accent-secondary: #106ebe;
+            --accent-light: #004578;
+            --accent-contrast: #ffffff;
+            --error: #a4262c;
+            --warning: #8a6d00;
+            --info: #0078d4;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+            --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.14);
+            --ring: 0 0 0 3px rgba(0, 120, 212, 0.22);
         }
 
         * {
@@ -282,12 +1185,12 @@ public static class WebDashboard
         }
 
         ::-webkit-scrollbar-thumb {
-            background: var(--border);
+            background: #c8c6c4;
             border-radius: 3px;
         }
 
         ::-webkit-scrollbar-thumb:hover {
-            background: var(--text-secondary);
+            background: var(--accent-secondary);
         }
 
         /* Firefox scrollbar */
@@ -298,113 +1201,176 @@ public static class WebDashboard
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: var(--bg-primary);
+            min-width: 320px;
+            background-color: var(--bg-primary);
+            background-image:
+                linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.018) 1px, transparent 1px),
+                linear-gradient(180deg, #ffffff 0%, #f3f2f1 100%);
+            background-size: 42px 42px, 42px 42px, auto;
             color: var(--text-primary);
-            line-height: 1.6;
+            line-height: 1.5;
+            font-feature-settings: ""tnum"" 1, ""cv02"" 1;
+            text-rendering: optimizeLegibility;
         }
 
         .app-container {
             display: flex;
-            height: 100vh;
+            flex-direction: column;
+            min-height: 100vh;
         }
 
-        /* Sidebar */
-        .sidebar {
-            position: fixed;
-            left: 0;
+        /* Top Navigation */
+        .top-nav {
+            position: sticky;
             top: 0;
-            width: 260px;
-            height: 100vh;
-            background: var(--bg-secondary);
-            overflow-y: auto;
             z-index: 1000;
+            background: rgba(255, 255, 255, 0.96);
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            backdrop-filter: blur(16px);
+        }
+
+        .top-nav-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            width: min(1560px, 100%);
+            margin: 0 auto;
+            padding: 12px 30px;
+        }
+
+        .brand-link {
+            display: flex;
+            align-items: center;
+            flex: 0 0 auto;
+            text-decoration: none;
+            min-width: 172px;
+        }
+
+        .brand-link img {
+            display: block;
+            width: auto;
+            height: 42px;
+            filter: none;
+        }
+
+        .top-menu {
+            list-style: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            flex: 1 1 auto;
+            min-width: 0;
+            margin: 0;
             padding: 0;
         }
 
-        .sidebar-header {
-            padding: 16px 12px;
-            position: sticky;
-            top: 0;
-            background: var(--bg-secondary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: auto;
-        }
-
-        .sidebar-logo {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: auto;
-            width: 100%;
-            max-width: 220px;
-        }
-
-        .sidebar-logo img {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
-        }
-
-        .sidebar-menu {
-            list-style: none;
-            padding: 12px 0;
-        }
-
         .menu-section {
-            padding: 8px 12px;
+            position: relative;
+            padding: 0;
         }
 
         .menu-label {
-            display: block;
-            padding: 8px 12px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 9px 11px;
+            border: 1px solid transparent;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 720;
             color: var(--text-secondary);
-            margin-top: 8px;
+            cursor: default;
+            white-space: nowrap;
+        }
+
+        .menu-label::after {
+            content: ""+"";
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .menu-section:hover .menu-label,
+        .menu-section:focus-within .menu-label {
+            background: #f3f2f1;
+            border-color: var(--border);
+            color: var(--text-primary);
+        }
+
+        .menu-dropdown {
+            position: absolute;
+            left: 0;
+            top: calc(100% + 8px);
+            display: grid;
+            gap: 4px;
+            min-width: 208px;
+            padding: 8px;
+            background: #ffffff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: var(--shadow-md);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+        }
+
+        .menu-section:hover .menu-dropdown,
+        .menu-section:focus-within .menu-dropdown {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
         }
 
         .menu-item {
-            display: block;
-            padding: 10px 12px;
+            display: inline-flex;
+            align-items: center;
+            padding: 9px 11px;
             color: var(--text-secondary);
             text-decoration: none;
-            border-left: 3px solid transparent;
+            border: 1px solid transparent;
+            border-radius: 7px;
             transition: all 0.2s ease;
             font-size: 14px;
+            font-weight: 560;
+            line-height: 1.3;
+            position: relative;
+            white-space: nowrap;
         }
 
         .menu-item:hover {
-            background: var(--surface);
+            background: #f3f2f1;
+            border-color: var(--border);
             color: var(--text-primary);
         }
 
         .menu-item.active {
-            background: rgba(16, 185, 129, 0.1);
-            border-left-color: var(--accent-primary);
+            background: #eff6fc;
+            border-color: #deecf9;
             color: var(--accent-primary);
-            font-weight: 600;
+            font-weight: 700;
+            box-shadow: inset 0 -2px 0 var(--accent-primary);
         }
 
         /* Main Content */
         .main-content {
-            margin-left: 260px;
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: var(--bg-primary);
+            background:
+                linear-gradient(180deg, #ffffff, transparent 260px),
+                var(--bg-primary);
+            min-width: 0;
         }
 
         header {
-            background: var(--bg-secondary);
-            padding: 18px;
-            position: sticky;
-            top: 0;
-            z-index: 100;
+            background: #ffffff;
+            border-bottom: 1px solid var(--border);
+            padding: 18px 30px;
         }
 
         .header-content {
@@ -414,9 +1380,23 @@ public static class WebDashboard
         }
 
         h1 {
-            font-size: 28px;
-            font-weight: 700;
+            font-size: 24px;
+            font-weight: 780;
             color: var(--text-primary);
+            letter-spacing: 0;
+        }
+
+        .header-title {
+            min-width: 0;
+        }
+
+        .header-kicker {
+            color: var(--accent-secondary);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 2px;
         }
 
         .header-subtitle {
@@ -441,85 +1421,120 @@ public static class WebDashboard
         }
 
         .status-badge {
-            background: var(--surface);
-            padding: 4px 12px;
-            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #eff6fc;
+            padding: 5px 10px;
+            border-radius: 999px;
             border: 1px solid var(--border);
             color: var(--accent-primary);
             font-weight: 600;
-            font-family: 'Courier New', monospace;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         }
 
         main {
             flex: 1;
             overflow-y: auto;
-            padding: 24px;
+            padding: 30px;
+        }
+
+        .section-title {
+            margin: 28px 0 14px;
+            font-size: 18px;
+            color: var(--text-primary);
+            font-weight: 780;
+            letter-spacing: 0;
         }
 
         /* Dashboard Grid */
         .metrics-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-bottom: 32px;
+            grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+            gap: 14px;
+            margin-bottom: 30px;
         }
 
         .metric-card {
-            background: var(--surface);
+            background:
+                linear-gradient(180deg, #ffffff, #fbfbfb),
+                var(--surface);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 20px;
-            transition: all 0.3s ease;
+            padding: 18px;
+            transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+            box-shadow: var(--shadow-sm);
+            min-height: 112px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card::before {
+            content: """";
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            opacity: 0.72;
         }
 
         .metric-card:hover {
-            background: var(--surface-light);
-            border-color: var(--accent-primary);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(16, 185, 129, 0.1);
+            background:
+                linear-gradient(180deg, #ffffff, #f8fbff),
+                var(--surface-light);
+            border-color: rgba(0, 120, 212, 0.45);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
         }
 
         .metric-label {
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 750;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.075em;
             color: var(--text-secondary);
             margin-bottom: 8px;
         }
 
         .metric-value {
-            font-size: 24px;
-            font-weight: 700;
+            font-size: 26px;
+            font-weight: 790;
             color: var(--accent-primary);
-            word-break: break-all;
+            overflow-wrap: anywhere;
+            letter-spacing: 0;
+            line-height: 1.12;
         }
 
         /* Report Cards */
         .report-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
         }
 
         .card {
-            background: var(--surface);
+            background:
+                linear-gradient(180deg, #ffffff, #fbfbfb),
+                var(--surface);
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: hidden;
-            transition: all 0.3s ease;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+            box-shadow: var(--shadow-sm);
         }
 
         .card:hover {
-            border-color: var(--accent-primary);
-            box-shadow: 0 12px 32px rgba(16, 185, 129, 0.1);
+            border-color: rgba(0, 120, 212, 0.34);
+            box-shadow: var(--shadow-md);
         }
 
         .card h2 {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(5, 150, 105, 0.05));
-            padding: 16px;
+            background: #faf9f8;
+            padding: 15px 16px;
             font-size: 16px;
-            font-weight: 600;
+            font-weight: 720;
             color: var(--text-primary);
             border-bottom: 1px solid var(--border);
             margin: 0;
@@ -536,7 +1551,7 @@ public static class WebDashboard
         }
 
         .total-item {
-            background: var(--bg-secondary);
+            background: #ffffff;
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 12px;
@@ -553,7 +1568,7 @@ public static class WebDashboard
 
         .total-item .total-value {
             font-size: 18px;
-            font-weight: 600;
+            font-weight: 700;
             color: var(--text-primary);
         }
 
@@ -577,13 +1592,13 @@ public static class WebDashboard
         input[type=""number""],
         select {
             width: 100%;
-            padding: 10px;
+            padding: 11px 12px;
             border: 1px solid var(--border);
-            border-radius: 4px;
-            background: var(--bg-primary);
+            border-radius: 7px;
+            background: #ffffff;
             color: var(--text-primary);
             font-size: 13px;
-            transition: border-color 0.2s ease;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
         }
 
         input[type=""text""]:focus,
@@ -591,7 +1606,8 @@ public static class WebDashboard
         select:focus {
             outline: none;
             border-color: var(--accent-primary);
-            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+            box-shadow: var(--ring);
+            background: #ffffff;
         }
 
         .checkbox-group {
@@ -622,22 +1638,23 @@ public static class WebDashboard
 
         button {
             background: var(--accent-primary);
-            color: var(--bg-primary);
+            color: var(--accent-contrast);
             border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            font-weight: 600;
+            padding: 10px 16px;
+            border-radius: 7px;
+            font-weight: 760;
             font-size: 13px;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.06em;
+            box-shadow: 0 10px 22px rgba(24, 184, 116, 0.18);
         }
 
         button:hover {
             background: var(--accent-secondary);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 14px 28px rgba(24, 184, 116, 0.24);
         }
 
         button:active {
@@ -646,8 +1663,10 @@ public static class WebDashboard
 
         .header-links {
             display: flex;
-            gap: 16px;
+            gap: 12px;
             align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
         }
 
         .header-link {
@@ -655,19 +1674,23 @@ public static class WebDashboard
             text-decoration: none;
             font-size: 14px;
             transition: color 0.2s ease;
+            font-weight: 650;
+            padding: 7px 9px;
+            border-radius: 7px;
         }
 
         .header-link:hover {
             color: var(--accent-primary);
+            background: rgba(255, 255, 255, 0.045);
         }
 
         .btn-donate {
             background: var(--accent-primary);
-            color: #0a0e27;
+            color: var(--accent-contrast);
             border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            font-weight: 600;
+            padding: 9px 16px;
+            border-radius: 7px;
+            font-weight: 760;
             cursor: pointer;
             transition: background 0.2s ease;
         }
@@ -685,7 +1708,8 @@ public static class WebDashboard
             top: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0, 0, 0, 0.7);
+            background-color: rgba(0, 0, 0, 0.74);
+            backdrop-filter: blur(10px);
             align-items: center;
             justify-content: center;
         }
@@ -697,10 +1721,12 @@ public static class WebDashboard
         .modal-content {
             background-color: var(--bg-secondary);
             padding: 32px;
-            border-radius: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
             text-align: center;
             max-width: 500px;
             color: var(--text-primary);
+            box-shadow: var(--shadow-md);
         }
 
         .modal-close {
@@ -731,11 +1757,131 @@ public static class WebDashboard
             background: var(--surface);
             padding: 16px;
             border-radius: 8px;
+            border: 1px solid var(--border);
             margin: 16px 0;
             word-break: break-all;
             font-size: 12px;
             color: var(--text-secondary);
-            font-family: monospace;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th {
+            color: var(--text-secondary);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.045em;
+        }
+
+        td {
+            color: var(--text-primary);
+        }
+
+        tbody tr {
+            transition: background 0.16s ease;
+        }
+
+        tbody tr:hover {
+            background: #f3f2f1 !important;
+        }
+
+        .data-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+        }
+
+        .top100-table-wrap {
+            max-height: calc(100vh - 150px);
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+
+        #top100-status[hidden] {
+            display: none;
+        }
+
+        .data-table {
+            min-width: 1080px;
+            font-size: 13px;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 11px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .data-table th {
+            background: var(--surface-light);
+            position: sticky;
+            top: 67px;
+            z-index: 20;
+            text-align: right;
+            box-shadow: 0 1px 0 var(--border), 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        .top100-table-wrap .data-table th {
+            top: 0;
+            z-index: 30;
+        }
+
+        .data-table th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .data-table th.sortable:hover {
+            background: #eff6fc;
+            color: var(--accent-primary);
+        }
+
+        .data-table th.sortable::after {
+            content: "" ↕"";
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+
+        .data-table th.sortable.sort-asc::after {
+            content: "" ↑"";
+            color: var(--accent-primary);
+        }
+
+        .data-table th.sortable.sort-desc::after {
+            content: "" ↓"";
+            color: var(--accent-primary);
+        }
+
+        .data-table th:first-child,
+        .data-table th:nth-child(2),
+        .data-table td:first-child,
+        .data-table td:nth-child(2) {
+            text-align: left;
+        }
+
+        .data-table .rank-cell {
+            width: 92px;
+            min-width: 92px;
+            color: var(--text-secondary);
+            font-weight: 700;
+        }
+
+        .data-table .address-cell {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+            color: var(--accent-light);
+            white-space: nowrap;
+        }
+
+        .data-table .amount-cell {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
         .form-row {
@@ -752,7 +1898,7 @@ public static class WebDashboard
 
         /* Results */
         .result-container {
-            background: var(--surface);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.026), rgba(255, 255, 255, 0.008)), var(--surface);
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 20px;
@@ -795,9 +1941,9 @@ public static class WebDashboard
         .output-log {
             background: var(--bg-primary);
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 7px;
             padding: 12px;
-            font-family: 'Courier New', monospace;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 12px;
             color: var(--text-secondary);
             max-height: 300px;
@@ -814,7 +1960,7 @@ public static class WebDashboard
         .file-item {
             background: var(--bg-primary);
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 7px;
             padding: 12px;
             display: flex;
             justify-content: space-between;
@@ -845,15 +1991,31 @@ public static class WebDashboard
         }
 
         /* Responsive */
+        @media (max-width: 1120px) {
+            .top-nav-inner {
+                align-items: flex-start;
+                flex-wrap: wrap;
+                padding: 12px 18px;
+            }
+
+            .top-menu {
+                order: 3;
+                width: 100%;
+                justify-content: flex-start;
+                overflow-x: auto;
+                padding-bottom: 2px;
+            }
+
+            .menu-dropdown {
+                position: fixed;
+                top: auto;
+                left: 18px;
+                right: 18px;
+                width: auto;
+            }
+        }
+
         @media (max-width: 768px) {
-            .sidebar {
-                width: 200px;
-            }
-
-            .main-content {
-                margin-left: 200px;
-            }
-
             .form-row {
                 grid-template-columns: 1fr;
             }
@@ -878,6 +2040,33 @@ public static class WebDashboard
                 padding: 16px;
             }
 
+            .top-nav-inner {
+                gap: 10px;
+                padding: 10px 14px;
+            }
+
+            .data-table th {
+                top: 106px;
+            }
+
+            .brand-link {
+                min-width: 132px;
+            }
+
+            .brand-link img {
+                height: 34px;
+            }
+
+            .top-menu {
+                gap: 4px;
+            }
+
+            .menu-label,
+            .menu-item {
+                padding: 8px 9px;
+                font-size: 13px;
+            }
+
             main {
                 padding: 16px;
             }
@@ -895,56 +2084,80 @@ public static class WebDashboard
             .header-subtitle {
                 flex-wrap: wrap;
             }
+
+            .header-links {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .status-badge {
+                max-width: 100%;
+            }
         }
     </style>
 </head>
 <body>
     <div class=""app-container"">
-        <nav class=""sidebar"">
-            <div class=""sidebar-header"">
-                <div class=""sidebar-logo"">
+        <nav class=""top-nav"">
+            <div class=""top-nav-inner"">
+                <a href=""/"" class=""brand-link"" aria-label=""OPTIC Dashboard"">
                     <img src=""/images/optic-logo.png"" alt=""OPTIC Logo"" />
+                </a>
+                <ul class=""top-menu"">
+                    <li class=""menu-section"">
+                    <a href=""/"" class=""menu-item" + (page == "dashboard" ? @""" active" : @"""") + @""">Dashboard</a>
+                    </li>
+                    <li class=""menu-section"">
+                        <a href=""/page/top100"" class=""menu-item" + (page == "top100" ? @""" active" : @"""") + @""">Top 100</a>
+                    </li>
+                    <li class=""menu-section"">
+                        <span class=""menu-label"">Reports</span>
+                        <div class=""menu-dropdown"">
+                            <a href=""/page/distributions"" class=""menu-item" + (page == "distributions" ? @""" active" : @"""") + @""">Distributions</a>
+                            <a href=""/page/locks"" class=""menu-item" + (page == "locks" ? @""" active" : @"""") + @""">Locks & Staking</a>
+                            <a href=""/page/counterparties"" class=""menu-item" + (page == "counterparties" ? @""" active" : @"""") + @""">Counterparties</a>
+                            <a href=""/page/network"" class=""menu-item" + (page == "network" ? @""" active" : @"""") + @""">Network</a>
+                            <a href=""/page/wallet"" class=""menu-item" + (page == "wallet" ? @""" active" : @"""") + @""">Wallet</a>
+                        </div>
+                    </li>
+                    <li class=""menu-section"">
+                        <span class=""menu-label"">Advanced</span>
+                        <div class=""menu-dropdown"">
+                            <a href=""/page/multisend"" class=""menu-item" + (page == "multisend" ? @""" active" : @"""") + @""">Multisend</a>
+                            <a href=""/page/cmc"" class=""menu-item" + (page == "cmc" ? @""" active" : @"""") + @""">CMC Data</a>
+                            <a href=""/page/custom"" class=""menu-item" + (page == "custom" ? @""" active" : @"""") + @""">Custom Args</a>
+                        </div>
+                    </li>
+                    <li class=""menu-section"">
+                        <span class=""menu-label"">Analytics</span>
+                        <div class=""menu-dropdown"">
+                            <a href=""/page/analytics"" class=""menu-item" + (page == "analytics" ? @""" active" : @"""") + @""">Daily Stats</a>
+                            <a href=""/page/synced-data"" class=""menu-item" + (page == "synced-data" ? @""" active" : @"""") + @""">Synced Data Table</a>
+                        </div>
+                    </li>
+                    <li class=""menu-section"">
+                        <span class=""menu-label"">System</span>
+                        <div class=""menu-dropdown"">
+                            <a href=""/page/status"" class=""menu-item" + (page == "status" ? @""" active" : @"""") + @""">Node Status</a>
+                            <a href=""/page/validators"" class=""menu-item" + (page == "validators" ? @""" active" : @"""") + @""">Validators</a>
+                            <a href=""/page/sync"" class=""menu-item" + (page == "sync" ? @""" active" : @"""") + @""">Data Sync</a>
+                        </div>
+                    </li>
+                </ul>
+                <div class=""header-links"">
+                    <span class=""status-badge""><span class=""status-indicator""></span>Local Dashboard</span>
+                    <a href=""/page/about"" class=""header-link"">About</a>
+                    <button class=""btn-donate"" onclick=""openDonateModal()"">Donate</button>
                 </div>
             </div>
-            <ul class=""sidebar-menu"">
-                <li class=""menu-section"" style=""padding-top: 0; margin-bottom: 24px;"">
-                    <a href=""/"" class=""menu-item" + (page == "dashboard" ? @""" active" : @"""") + @""">Dashboard</a>
-                </li>
-                <li class=""menu-section"">
-                    <span class=""menu-label"">Reports</span>
-                    <a href=""/page/distributions"" class=""menu-item" + (page == "distributions" ? @""" active" : @"""") + @""">Distributions</a>
-                    <a href=""/page/locks"" class=""menu-item" + (page == "locks" ? @""" active" : @"""") + @""">Locks & Staking</a>
-                    <a href=""/page/counterparties"" class=""menu-item" + (page == "counterparties" ? @""" active" : @"""") + @""">Counterparties</a>
-                    <a href=""/page/network"" class=""menu-item" + (page == "network" ? @""" active" : @"""") + @""">Network</a>
-                    <a href=""/page/wallet"" class=""menu-item" + (page == "wallet" ? @""" active" : @"""") + @""">Wallet</a>
-                </li>
-                <li class=""menu-section"">
-                    <span class=""menu-label"">Advanced</span>
-                    <a href=""/page/multisend"" class=""menu-item" + (page == "multisend" ? @""" active" : @"""") + @""">Multisend</a>
-                    <a href=""/page/cmc"" class=""menu-item" + (page == "cmc" ? @""" active" : @"""") + @""">CMC Data</a>
-                    <a href=""/page/custom"" class=""menu-item" + (page == "custom" ? @""" active" : @"""") + @""">Custom Args</a>
-                </li>
-                <li class=""menu-section"">
-                    <span class=""menu-label"">Analytics</span>
-                    <a href=""/page/analytics"" class=""menu-item" + (page == "analytics" ? @""" active" : @"""") + @""">Daily Stats</a>
-                    <a href=""/page/synced-data"" class=""menu-item" + (page == "synced-data" ? @""" active" : @"""") + @""">Synced Data Table</a>
-                </li>
-                <li class=""menu-section"">
-                    <span class=""menu-label"">System</span>
-                    <a href=""/page/status"" class=""menu-item" + (page == "status" ? @""" active" : @"""") + @""">Node Status</a>
-                    <a href=""/page/validators"" class=""menu-item" + (page == "validators" ? @""" active" : @"""") + @""">Validators</a>
-                    <a href=""/page/sync"" class=""menu-item" + (page == "sync" ? @""" active" : @"""") + @""">Data Sync</a>
-                </li>
-            </ul>
         </nav>
         
         <div class=""main-content"">
             <header>
                 <div class=""header-content"">
-                    <h1>" + GetPageTitle(page) + @"</h1>
-                    <div class=""header-links"">
-                        <a href=""/page/about"" class=""header-link"">About</a>
-                        <button class=""btn-donate"" onclick=""openDonateModal()"">Donate</button>
+                    <div class=""header-title"">
+                        <div class=""header-kicker"">Optio Protocol Intelligence</div>
+                        <h1>" + GetPageTitle(page) + @"</h1>
                     </div>
                 </div>
             </header>
@@ -1006,8 +2219,35 @@ public static class WebDashboard
                         <div class=""metric-value"" id=""metric-total-locked"">--</div>
                     </div>
                     <div class=""metric-card"">
+                        <div class=""metric-label"">Total Emitted Amount</div>
+                        <div class=""metric-value"" id=""metric-total-emitted"">--</div>
+                    </div>
+                    <div class=""metric-card"">
                         <div class=""metric-label"">Total Distributed Amount</div>
                         <div class=""metric-value"" id=""metric-total-distributed"">--</div>
+                    </div>
+                </div>
+                <h2 class=""section-title"">Lock Period Summary</h2>
+                <div class=""metrics-grid"">
+                    <div class=""metric-card"">
+                        <div class=""metric-label"">6 Months</div>
+                        <div class=""metric-value"" id=""metric-lock-6m-count"">--</div>
+                        <div class=""metric-label"" id=""metric-lock-6m-amount"">--</div>
+                    </div>
+                    <div class=""metric-card"">
+                        <div class=""metric-label"">12 Months</div>
+                        <div class=""metric-value"" id=""metric-lock-12m-count"">--</div>
+                        <div class=""metric-label"" id=""metric-lock-12m-amount"">--</div>
+                    </div>
+                    <div class=""metric-card"">
+                        <div class=""metric-label"">18 Months</div>
+                        <div class=""metric-value"" id=""metric-lock-18m-count"">--</div>
+                        <div class=""metric-label"" id=""metric-lock-18m-amount"">--</div>
+                    </div>
+                    <div class=""metric-card"">
+                        <div class=""metric-label"">24 Months</div>
+                        <div class=""metric-value"" id=""metric-lock-24m-count"">--</div>
+                        <div class=""metric-label"" id=""metric-lock-24m-amount"">--</div>
                     </div>
                 </div>
                 <script>
@@ -1021,7 +2261,9 @@ public static class WebDashboard
                             const staked = summary.totalStaked || 0;
                             const locked = summary.totalLocked || 0;
                             const distributed = summary.totalDistributed || (banked + staked);
-                            const formatAmt = (value) => (value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            const emitted = summary.totalEmitted || 0;
+                            const formatAmt = (value) => Math.round(value || 0).toLocaleString('en-US');
+                            const formatCount = (value) => (value || 0).toLocaleString('en-US');
 
                             const setText = (id, value) => {
                                 const el = document.getElementById(id);
@@ -1032,14 +2274,23 @@ public static class WebDashboard
                             setText('metric-total-banked', formatAmt(banked));
                             setText('metric-total-staked', formatAmt(staked));
                             setText('metric-total-locked', formatAmt(locked));
+                            setText('metric-total-emitted', formatAmt(emitted));
                             setText('metric-total-distributed', formatAmt(distributed));
+                            setText('metric-lock-6m-count', formatCount(summary.lock6mCount));
+                            setText('metric-lock-12m-count', formatCount(summary.lock12mCount));
+                            setText('metric-lock-18m-count', formatCount(summary.lock18mCount));
+                            setText('metric-lock-24m-count', formatCount(summary.lock24mCount));
+                            setText('metric-lock-6m-amount', formatAmt(summary.lock6mAmount) + ' OPT');
+                            setText('metric-lock-12m-amount', formatAmt(summary.lock12mAmount) + ' OPT');
+                            setText('metric-lock-18m-amount', formatAmt(summary.lock18mAmount) + ' OPT');
+                            setText('metric-lock-24m-amount', formatAmt(summary.lock24mAmount) + ' OPT');
                         } catch (error) {
                             // leave placeholders on error
                         }
                     })();
                 </script>
 
-                <h2 style=""margin: 24px 0 16px; font-size: 18px; color: var(--text-primary);"">Wallet Overview</h2>
+                <h2 class=""section-title"">Wallet Overview</h2>
                 <div class=""report-cards"">
 ");
         AppendWalletGrowthCard(sb);
@@ -1048,7 +2299,7 @@ public static class WebDashboard
         sb.Append(@"
                 </div>
 
-                <h2 style=""margin: 24px 0 16px; font-size: 18px; color: var(--text-primary);"">Quick Access</h2>
+                <h2 class=""section-title"">Quick Access</h2>
                 <div class=""report-cards"">
 ");
         AppendDistributionsCard(sb);
@@ -1067,6 +2318,9 @@ public static class WebDashboard
 ");
         switch (page)
         {
+            case "top100":
+                AppendTop100Card(sb);
+                break;
             case "distributions":
                 AppendDistributionsCard(sb);
                 AppendCounterpartiesCard(sb);
@@ -1385,6 +2639,127 @@ public static class WebDashboard
 ");
     }
 
+    static void AppendTop100Card(System.Text.StringBuilder sb)
+    {
+        sb.Append(@"
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>Top 100 Wallets</h2>
+                        <div class=""card-content"">
+                            <div id=""top100-status"" style=""color: var(--text-secondary); margin-bottom: 8px;"">Loading top wallets...</div>
+                            <div class=""data-table-wrap top100-table-wrap"">
+                                <table class=""data-table"">
+                                    <thead>
+                                        <tr>
+                                            <th class=""sortable sort-asc"" data-sort=""rank"">Rank</th>
+                                            <th class=""sortable"" data-sort=""address"">Wallet</th>
+                                            <th class=""sortable"" data-sort=""total"">Total</th>
+                                            <th class=""sortable"" data-sort=""walletBalance"">Wallet Balance</th>
+                                            <th class=""sortable"" data-sort=""staked"">Staked</th>
+                                            <th class=""sortable"" data-sort=""unbonding"">Unbonding</th>
+                                            <th class=""sortable"" data-sort=""totalLocked"">Locked</th>
+                                            <th class=""sortable"" data-sort=""lock6Months"">6 Months</th>
+                                            <th class=""sortable"" data-sort=""lock12Months"">12 Months</th>
+                                            <th class=""sortable"" data-sort=""lock18Months"">18 Months</th>
+                                            <th class=""sortable"" data-sort=""lock24Months"">24 Months</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id=""top100-body"">
+                                        <tr><td colspan=""11"" style=""text-align: center; color: var(--text-secondary);"">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <script>
+                        (async function () {
+                            const status = document.getElementById('top100-status');
+                            const body = document.getElementById('top100-body');
+                            const headers = Array.from(document.querySelectorAll('.data-table th.sortable'));
+                            const formatAmt = (value) => Math.round(value || 0).toLocaleString('en-US');
+                            let wallets = [];
+                            let sortKey = 'rank';
+                            let sortDirection = 'asc';
+                            const escapeHtml = (value) => String(value || '').replace(/[&<>\x22\x27]/g, ch => {
+                                switch (ch.charCodeAt(0)) {
+                                    case 38: return '&amp;';
+                                    case 60: return '&lt;';
+                                    case 62: return '&gt;';
+                                    case 34: return '&quot;';
+                                    case 39: return '&#39;';
+                                    default: return ch;
+                                }
+                            });
+                            const renderRows = () => {
+                                const sorted = [...wallets].sort((a, b) => {
+                                    let result;
+                                    if (sortKey === 'address') {
+                                        result = String(a.address || '').localeCompare(String(b.address || ''), 'en-US', { sensitivity: 'base' });
+                                    } else {
+                                        result = (Number(a[sortKey]) || 0) - (Number(b[sortKey]) || 0);
+                                    }
+                                    return sortDirection === 'asc' ? result : -result;
+                                });
+
+                                body.innerHTML = sorted.map(w => `
+                                    <tr>
+                                        <td class=""rank-cell"">${w.rank}</td>
+                                        <td class=""address-cell"">${escapeHtml(w.address)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.total)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.walletBalance)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.staked)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.unbonding)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.totalLocked)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.lock6Months)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.lock12Months)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.lock18Months)}</td>
+                                        <td class=""amount-cell"">${formatAmt(w.lock24Months)}</td>
+                                    </tr>
+                                `).join('');
+                            };
+                            const updateSortHeaders = () => {
+                                headers.forEach(header => {
+                                    header.classList.toggle('sort-asc', header.dataset.sort === sortKey && sortDirection === 'asc');
+                                    header.classList.toggle('sort-desc', header.dataset.sort === sortKey && sortDirection === 'desc');
+                                });
+                            };
+
+                            headers.forEach(header => {
+                                header.addEventListener('click', () => {
+                                    const nextKey = header.dataset.sort;
+                                    if (sortKey === nextKey) {
+                                        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                                    } else {
+                                        sortKey = nextKey;
+                                        sortDirection = nextKey === 'address' || nextKey === 'rank' ? 'asc' : 'desc';
+                                    }
+                                    updateSortHeaders();
+                                    renderRows();
+                                });
+                            });
+
+                            try {
+                                const response = await fetch('/api/top100');
+                                const data = await response.json();
+                                if (!response.ok) throw new Error(data.error || 'Unable to load top wallets');
+                                wallets = data.wallets || [];
+                                if (wallets.length === 0) {
+                                    status.textContent = 'No wallet balance data found. Generate wallet-balances.csv, then refresh this page.';
+                                    body.innerHTML = '<tr><td colspan=""11"" style=""text-align: center; color: var(--text-secondary);"">No data available</td></tr>';
+                                    return;
+                                }
+
+                                status.hidden = true;
+                                updateSortHeaders();
+                                renderRows();
+                            } catch (error) {
+                                status.textContent = 'Error loading top wallets: ' + error.message;
+                                body.innerHTML = '<tr><td colspan=""11"" style=""text-align: center; color: var(--error);"">Error loading data</td></tr>';
+                            }
+                        })();
+                    </script>
+");
+    }
+
     static void AppendWalletLocksReportCard(System.Text.StringBuilder sb)
     {
         sb.Append(@"
@@ -1545,11 +2920,11 @@ public static class WebDashboard
                                         html += '<td style=""padding: 12px; text-align: right;"">' + (row.endBlockNumber ? row.endBlockNumber.toLocaleString() : '-') + '</td>';
                                         html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalWallets ? row.totalWallets.toLocaleString() : '0') + '</td>';
                                         html += '<td style=""padding: 12px; text-align: right;"">' + (row.activeWallets ? row.activeWallets.toLocaleString() : '0') + '</td>';
-                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalSupply ? row.totalSupply.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00') + '</td>';
-                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalStaked ? row.totalStaked.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00') + '</td>';
-                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalUnbonding ? row.totalUnbonding.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00') + '</td>';
-                                        html += '<td style=""padding: 12px; text-align: right; font-weight: 600; color: var(--accent);"">​' + (row.totalLiquidPlus ? row.totalLiquidPlus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00') + '</td>';
-                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalLocked ? row.totalLocked.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00') + '</td>';
+                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalSupply ? Math.round(row.totalSupply).toLocaleString('en-US') : '0') + '</td>';
+                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalStaked ? Math.round(row.totalStaked).toLocaleString('en-US') : '0') + '</td>';
+                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalUnbonding ? Math.round(row.totalUnbonding).toLocaleString('en-US') : '0') + '</td>';
+                                        html += '<td style=""padding: 12px; text-align: right; font-weight: 600; color: var(--accent);"">​' + (row.totalLiquidPlus ? Math.round(row.totalLiquidPlus).toLocaleString('en-US') : '0') + '</td>';
+                                        html += '<td style=""padding: 12px; text-align: right;"">' + (row.totalLocked ? Math.round(row.totalLocked).toLocaleString('en-US') : '0') + '</td>';
                                         html += '<td style=""padding: 12px; text-align: right;"">' + (row.txCount ? row.txCount.toLocaleString() : '0') + '</td>';
                                         html += '</tr>';
                                     });
@@ -1746,7 +3121,7 @@ public static class WebDashboard
                                             const hoverDot = document.createElementNS(svgNS, 'circle');
                                             hoverDot.setAttribute('r', '4');
                                             hoverDot.setAttribute('fill', 'var(--accent-primary)');
-                                            hoverDot.setAttribute('stroke', '#0b1228');
+                                            hoverDot.setAttribute('stroke', '#ffffff');
                                             hoverDot.setAttribute('stroke-width', '2');
                                             hoverDot.setAttribute('opacity', '0');
                                             svg.appendChild(hoverDot);
@@ -1944,7 +3319,7 @@ public static class WebDashboard
                                             const hoverDot = document.createElementNS(svgNS, 'circle');
                                             hoverDot.setAttribute('r', '4');
                                             hoverDot.setAttribute('fill', 'var(--accent-primary)');
-                                            hoverDot.setAttribute('stroke', '#0b1228');
+                                            hoverDot.setAttribute('stroke', '#ffffff');
                                             hoverDot.setAttribute('stroke-width', '2');
                                             hoverDot.setAttribute('opacity', '0');
                                             svg.appendChild(hoverDot);
@@ -2023,7 +3398,9 @@ public static class WebDashboard
                                         const locked = summary.totalLocked || 0;
                                         const totalWallets = summary.totalWallets || 0;
                                         const distributed = summary.totalDistributed || (banked + staked);
-                                        const formatAmt = (value) => (value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        const emitted = summary.totalEmitted || 0;
+                                        const formatAmt = (value) => Math.round(value || 0).toLocaleString('en-US');
+                                        const formatCount = (value) => (value || 0).toLocaleString('en-US');
 
                                         container.innerHTML = `
                                             <div class=""total-item"">
@@ -2043,8 +3420,28 @@ public static class WebDashboard
                                                 <div class=""total-value"">${formatAmt(locked)}</div>
                                             </div>
                                             <div class=""total-item"">
-                                                <label>Total Distributed Amount (Banked + Staked)</label>
+                                                <label>Total Emitted Amount</label>
+                                                <div class=""total-value"">${formatAmt(emitted)}</div>
+                                            </div>
+                                            <div class=""total-item"">
+                                                <label>Total Distributed Amount</label>
                                                 <div class=""total-value"">${formatAmt(distributed)}</div>
+                                            </div>
+                                            <div class=""total-item"">
+                                                <label>6 Months</label>
+                                                <div class=""total-value"">${formatCount(summary.lock6mCount)} / ${formatAmt(summary.lock6mAmount)} OPT</div>
+                                            </div>
+                                            <div class=""total-item"">
+                                                <label>12 Months</label>
+                                                <div class=""total-value"">${formatCount(summary.lock12mCount)} / ${formatAmt(summary.lock12mAmount)} OPT</div>
+                                            </div>
+                                            <div class=""total-item"">
+                                                <label>18 Months</label>
+                                                <div class=""total-value"">${formatCount(summary.lock18mCount)} / ${formatAmt(summary.lock18mAmount)} OPT</div>
+                                            </div>
+                                            <div class=""total-item"">
+                                                <label>24 Months</label>
+                                                <div class=""total-value"">${formatCount(summary.lock24mCount)} / ${formatAmt(summary.lock24mAmount)} OPT</div>
                                             </div>
                                         `;
                                     } catch (error) {
@@ -2153,27 +3550,31 @@ public static class WebDashboard
     <title>Execution Result</title>
     <style>
         :root {
-            --bg-primary: #0a0e27;
-            --bg-secondary: #0f1535;
-            --surface: #1a2540;
-            --surface-light: #243456;
-            --border: #2d3e5f;
-            --text-primary: #e4e6eb;
-            --text-secondary: #a0a8b8;
-            --accent-primary: #10b981;
-            --accent-secondary: #059669;
+            --bg-primary: #f3f2f1;
+            --bg-secondary: #ffffff;
+            --surface: #ffffff;
+            --surface-light: #faf9f8;
+            --border: #d2d0ce;
+            --text-primary: #1b1a19;
+            --text-secondary: #323130;
+            --accent-primary: #0078d4;
+            --accent-secondary: #106ebe;
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: var(--bg-primary);
+            background:
+                linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.018) 1px, transparent 1px),
+                linear-gradient(180deg, #ffffff 0%, var(--bg-primary) 100%);
+            background-size: 42px 42px, 42px 42px, auto;
             color: var(--text-primary);
             padding: 20px;
             line-height: 1.6;
         }
 
         .result-container {
-            background: var(--bg-secondary);
+            background: #ffffff;
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 20px;
@@ -2220,7 +3621,7 @@ public static class WebDashboard
         }
 
         code {
-            background: var(--bg-primary);
+            background: #ffffff;
             padding: 2px 6px;
             border-radius: 4px;
             color: var(--accent-primary);
@@ -2228,7 +3629,7 @@ public static class WebDashboard
         }
 
         .output-log {
-            background: var(--bg-primary);
+            background: #ffffff;
             border: 1px solid var(--border);
             border-radius: 4px;
             padding: 12px;
@@ -2307,7 +3708,7 @@ public static class WebDashboard
         }
 
         .file-item {
-            background: var(--bg-primary);
+            background: #ffffff;
             border: 1px solid var(--border);
             border-radius: 4px;
             padding: 12px;
@@ -2620,10 +4021,10 @@ public static class WebDashboard
             sb.Append($@"
                 <tr>
                     <td class=""address-cell"">{System.Net.WebUtility.HtmlEncode(wallet)}</td>
-                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(balance)}</td>
-                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(liquid)}</td>
-                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(staked)}</td>
-                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(locked)}</td>
+                    <td class=""amount-cell"">{bVal:N0}</td>
+                    <td class=""amount-cell"">{lVal:N0}</td>
+                    <td class=""amount-cell"">{sVal:N0}</td>
+                    <td class=""amount-cell"">{kVal:N0}</td>
                 </tr>
 ");
         }
@@ -2631,15 +4032,15 @@ public static class WebDashboard
         sb.Append($@"
                 <tr style=""background: var(--surface-light); font-weight: 600;"">
                     <td style=""color: var(--accent-primary);"">TOTALS</td>
-                    <td class=""amount-cell"">{totalBalance:N2}</td>
-                    <td class=""amount-cell"">{totalLiquid:N2}</td>
-                    <td class=""amount-cell"">{totalStaked:N2}</td>
-                    <td class=""amount-cell"">{totalLocked:N2}</td>
+                    <td class=""amount-cell"">{totalBalance:N0}</td>
+                    <td class=""amount-cell"">{totalLiquid:N0}</td>
+                    <td class=""amount-cell"">{totalStaked:N0}</td>
+                    <td class=""amount-cell"">{totalLocked:N0}</td>
                 </tr>
             </tbody>
         </table>
         <p style=""color: var(--text-secondary); margin-top: 12px; font-size: 13px;"">
-            Showing {balances.Count} wallet{(balances.Count != 1 ? "s" : "")} | Total Balance: {totalBalance:N2} OPT
+            Showing {balances.Count} wallet{(balances.Count != 1 ? "s" : "")} | Total Balance: {totalBalance:N0} OPT
         </p>
 ");
 
@@ -2786,10 +4187,10 @@ public static class WebDashboard
                                             <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Total Supply (OPT)</th>
                                             <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Total Staked (OPT)</th>
                                             <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Total Locked (OPT)</th>
-                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Lock 6M</th>
-                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Lock 12M</th>
-                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Lock 18M</th>
-                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">Lock 24M</th>
+                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">6 Months</th>
+                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">12 Months</th>
+                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">18 Months</th>
+                                            <th style=""padding: 8px; text-align: right; border-right: 1px solid var(--border);"">24 Months</th>
                                             <th style=""padding: 8px; text-align: right;"">Tx Count</th>
                                         </tr>
                                     </thead>
@@ -2821,7 +4222,7 @@ public static class WebDashboard
                                     row.style.backgroundColor = index % 2 === 0 ? 'transparent' : 'var(--surface)';
                                     row.style.borderBottom = '1px solid var(--border)';
                                     
-                                    const formatNum = (val) => val === null ? '-' : val.toLocaleString('en-US', {{maximumFractionDigits: 2}});
+                                    const formatNum = (val) => val === null ? '-' : Math.round(val).toLocaleString('en-US');
                                     
                                     row.innerHTML = `
                                         <td style=""padding: 8px; border-right: 1px solid var(--border);"">${{stat.date}}</td>
@@ -2892,3 +4293,17 @@ public static class WebDashboard
     }
 }
 
+sealed class TopWalletEntry
+{
+    public int Rank { get; set; }
+    public string Address { get; set; } = "";
+    public decimal WalletBalance { get; set; }
+    public decimal Staked { get; set; }
+    public decimal Unbonding { get; set; }
+    public decimal Lock6Months { get; set; }
+    public decimal Lock12Months { get; set; }
+    public decimal Lock18Months { get; set; }
+    public decimal Lock24Months { get; set; }
+    public decimal TotalLocked => Lock6Months + Lock12Months + Lock18Months + Lock24Months;
+    public decimal Total => WalletBalance + Staked + Unbonding;
+}
