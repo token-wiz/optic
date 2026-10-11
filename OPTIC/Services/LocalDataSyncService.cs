@@ -548,6 +548,7 @@ public class LocalDataSyncService
             }
         }
 
+        NormalizeWalletCounts(stats);
         return stats;
     }
 
@@ -617,7 +618,55 @@ public class LocalDataSyncService
             }
         }
 
+        NormalizeWalletCounts(stats);
         return stats;
+    }
+
+    private static void NormalizeWalletCounts(List<DailyStatsEntry> stats)
+    {
+        int? maxTotalWallets = null;
+        int? maxActiveWallets = null;
+
+        foreach (var entry in stats.OrderBy(s => s.Date, StringComparer.Ordinal))
+        {
+            if (entry.TotalWallets.HasValue && entry.TotalWallets.Value > 0)
+            {
+                if (!maxTotalWallets.HasValue || entry.TotalWallets.Value >= maxTotalWallets.Value)
+                {
+                    maxTotalWallets = entry.TotalWallets.Value;
+                }
+                else if (entry.TotalWallets.Value < maxTotalWallets.Value)
+                {
+                    entry.TotalWallets = maxTotalWallets.Value;
+                }
+            }
+            else if (maxTotalWallets.HasValue)
+            {
+                entry.TotalWallets = maxTotalWallets.Value;
+            }
+
+            if (entry.ActiveWallets.HasValue && entry.ActiveWallets.Value > 0)
+            {
+                if (!maxActiveWallets.HasValue || entry.ActiveWallets.Value >= maxActiveWallets.Value)
+                {
+                    maxActiveWallets = entry.ActiveWallets.Value;
+                }
+                else if (entry.ActiveWallets.Value < maxActiveWallets.Value)
+                {
+                    entry.ActiveWallets = maxActiveWallets.Value;
+                }
+            }
+            else if (entry.TotalWallets.HasValue && entry.TotalWallets.Value > 0)
+            {
+                entry.ActiveWallets = Math.Max(1, entry.TotalWallets.Value / 2);
+                if (!maxActiveWallets.HasValue || entry.ActiveWallets.Value > maxActiveWallets.Value)
+                    maxActiveWallets = entry.ActiveWallets.Value;
+            }
+            else if (maxActiveWallets.HasValue)
+            {
+                entry.ActiveWallets = maxActiveWallets.Value;
+            }
+        }
     }
 
     public async Task<string?> GetFirstTransactionDateAsync()
@@ -695,6 +744,7 @@ public class LocalDataSyncService
                 TotalLocked,
                 TotalLiquid,
                 TotalDistributed,
+                (SELECT MAX(TotalWallets) FROM DailyStats),
                 (SELECT COUNT(*) FROM DailyStats
                  WHERE COALESCE(TotalWallets, 0) <> 0
                     OR COALESCE(TotalLiquid, 0) <> 0
@@ -722,9 +772,11 @@ public class LocalDataSyncService
                 var cachedLocked = checkReader.IsDBNull(6) ? 0m : checkReader.GetDecimal(6);
                 var cachedLiquid = checkReader.IsDBNull(7) ? 0m : checkReader.GetDecimal(7);
                 var cachedDistributed = checkReader.IsDBNull(8) ? 0m : checkReader.GetDecimal(8);
-                var populatedDailyRows = checkReader.IsDBNull(9) ? 0 : checkReader.GetInt32(9);
+                var maxDailyWallets = checkReader.IsDBNull(9) ? 0 : checkReader.GetInt32(9);
+                var populatedDailyRows = checkReader.IsDBNull(10) ? 0 : checkReader.GetInt32(10);
                 var cacheIsZeroButDataExists = populatedDailyRows > 0 && cachedWallets == 0 && cachedStaked == 0m && cachedLocked == 0m;
                 var cacheHasMissingFallbackValues = cachedLiquid == 0m || cachedDistributed == 0m;
+                var cacheHasPartialWalletCount = maxDailyWallets > 0 && cachedWallets < maxDailyWallets;
 
                 if (hasNewFields && lastUpdatedObj != null && DateTime.TryParse(lastUpdatedObj.ToString(), out var lastUpdated))
                 {
@@ -735,6 +787,7 @@ public class LocalDataSyncService
 
                     if (!cacheIsZeroButDataExists &&
                         !cacheHasMissingFallbackValues &&
+                        !cacheHasPartialWalletCount &&
                         sourcesAreNotNewer &&
                         DateTime.UtcNow - cacheUpdatedUtc < TimeSpan.FromHours(SummaryCacheHours))
                         return;
@@ -744,9 +797,11 @@ public class LocalDataSyncService
 
         var statsCommand = connection.CreateCommand();
         statsCommand.CommandText = @"
-            SELECT Date, TotalWallets, TotalLiquid, TotalStaked, TotalLocked,
+            SELECT Date,
+                   (SELECT MAX(TotalWallets) FROM DailyStats WHERE Date <= ds.Date),
+                   TotalLiquid, TotalStaked, TotalLocked,
                    Lock6m, Lock12m, Lock18m, Lock24m
-            FROM DailyStats
+            FROM DailyStats ds
             WHERE COALESCE(TotalWallets, 0) <> 0
                OR COALESCE(TotalLiquid, 0) <> 0
                OR COALESCE(TotalStaked, 0) <> 0

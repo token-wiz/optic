@@ -91,13 +91,13 @@ From the `OPTIC` directory:
 dotnet run -- --help
 dotnet run -- --status
 dotnet run -- --distributions
-dotnet run -- --web --web-host 127.0.0.1 --web-port 5070
+dotnet run -- --web --web-host 127.0.0.1 --web-port 80
 ```
 
 Then open:
 
 ```text
-http://127.0.0.1:5070
+http://127.0.0.1
 ```
 
 Run a one-time report:
@@ -109,14 +109,14 @@ dotnet run -- --distributions
 Run the web dashboard:
 
 ```powershell
-dotnet run -- --web --web-host 127.0.0.1 --web-port 5070
+dotnet run -- --web --web-host 127.0.0.1 --web-port 80
 ```
 
 Run with local sample dashboard data:
 
 ```powershell
 dotnet run -- --test-data
-dotnet run -- --web --web-host 127.0.0.1 --web-port 5070
+dotnet run -- --web --web-host 127.0.0.1 --web-port 80
 ```
 
 Run a daily stats backfill from a live Optio node:
@@ -136,7 +136,7 @@ dotnet run -- --sync-daily --backfill --backfill-days 30
 Start the dashboard with:
 
 ```powershell
-dotnet run -- --web --web-host 127.0.0.1 --web-port 5070
+dotnet run -- --web --web-host 127.0.0.1 --web-port 80
 ```
 
 The dashboard provides pages for:
@@ -227,7 +227,7 @@ General options:
 | `--help`, `-h`, `/?`, `help` | Show the built-in help text. |
 | `--web`, `web`, `--web-server` | Start the local web dashboard. |
 | `--web-host <host>` | Host/IP for the dashboard to bind to. Default is `127.0.0.1`. |
-| `--web-port <port>` | Port for the dashboard to bind to. Default is `5070`. |
+| `--web-port <port>` | Port for the dashboard to bind to. Default is `80`. |
 | `--status`, `--node-status`, `status` | Show CometBFT node sync status and exit. |
 | `--validators-nodes`, `validators-nodes` | List bonded validators with best-effort IP addresses and staked OPT. |
 | `--wallet-count`, `wallet-count` | Print the total number of wallet addresses and exit. |
@@ -254,14 +254,14 @@ Address and ledger reports:
 | `--totals=true`, `--totals=false` | Explicitly enable or disable totals in ledger output. |
 | `--network-totals`, `--totals-network` | Print all-time network totals and exit. |
 | `--dry-totals` | Run the totals accumulator dry run and exit. |
-| `--emitter <addr>`, `--emitter=<addr>` | Emission address for totals. Defaults to the built-in distribution source address. |
+| `--emitter <addr>`, `--emitter=<addr>` | Distribution sender used for distributed totals. Defaults to `optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst`. |
 
 MultiSend options:
 
 | Option | Description |
 | --- | --- |
 | `--multisend-sum`, `multisend-sum` | Summarize MultiSend totals for a sender and exit. |
-| `--from <addr>`, `--from=<addr>` | Sender address for MultiSend summary mode. |
+| `--from <addr>`, `--from=<addr>` | Sender address for MultiSend summary mode. Defaults to the emission destination `optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst`. |
 | `--lookback-blocks <n>`, `--lookback-blocks=<n>` | Look back `n` blocks from the latest height. |
 | `--out <path>`, `--out=<path>` | Write MultiSend CSV output. Also used by CMC export for the output CSV path. |
 | `--start-height <n>`, `--start-height=<n>` | Start block height for modes that support block ranges. |
@@ -282,7 +282,15 @@ Wallet, staking, and totals options:
 | `--total-staked`, `total-staked` | Print total staked OPT across all wallets. |
 | `--total-distributed`, `total-distributed` | Print total distributed OPT across all wallets. |
 | `--totals-all`, `totals-all` | Print total distributed, staked, and locked OPT across all wallets. |
-| `--emission-address <addr>`, `--emission-address=<addr>` | Emission address for distributed-total calculations. |
+| `--emission-address <addr>`, `--emission-address=<addr>` | Emission destination excluded from wallet totals. Defaults to `optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst`. |
+
+Default special-purpose addresses:
+
+| Role | Address | Purpose |
+| --- | --- | --- |
+| Emission destination | `optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst` | Where newly emitted OPT is sent. |
+| Fee recipient | `optio17xpfvakm2amg962yls6f84z3kell8c5l9yn0qn` | Gas / transaction fee collection. |
+| Distribution sender | `optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst` | Account sending daily distributions to wallets. |
 
 CoinMarketCap export options:
 
@@ -384,7 +392,7 @@ dotnet run -- --test-data
 After syncing, start the web dashboard and open:
 
 ```text
-http://127.0.0.1:5070/page/sync
+http://127.0.0.1/page/sync
 ```
 
 More detail is available in `OPTIC\BACKFILL_GUIDE.md` and `OPTIC\REALTIME_ACCUMULATION.md`.
@@ -422,7 +430,7 @@ When the web dashboard is running:
 Example:
 
 ```text
-http://127.0.0.1:5070/api/daily-stats/all
+http://127.0.0.1/api/daily-stats/all
 ```
 
 ## Troubleshooting
@@ -448,7 +456,7 @@ dotnet run -- --test-data
 dotnet run -- --sync-daily --backfill
 ```
 
-If port 5070 is already in use, choose another port:
+If port 80 is already in use, choose another port:
 
 ```powershell
 dotnet run -- --web --web-host 127.0.0.1 --web-port 5080

@@ -7,13 +7,17 @@ namespace OPTIC.Services;
 public class BlockScannerService
 {
     private readonly HttpClient _http;
+    private readonly HttpClient? _rpcHttp;
     private readonly GrpcChannel _grpcChannel;
     private const decimal ScaleInt = 1_000_000m; // uOPT to OPT
     private const int DefaultBackfillParallelism = 8;
+    private const string DistributionSourceAddress = "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
+    private const string FeeRecipientAddress = "optio17xpfvakm2amg962yls6f84z3kell8c5l9yn0qn";
 
-    public BlockScannerService(HttpClient http, GrpcChannel? grpcChannel = null)
+    public BlockScannerService(HttpClient http, GrpcChannel? grpcChannel = null, HttpClient? rpcHttp = null)
     {
         _http = http;
+        _rpcHttp = rpcHttp;
         _grpcChannel = grpcChannel ?? GrpcChannel.ForAddress("http://127.0.0.1:9090");
     }
 
@@ -44,6 +48,8 @@ public class BlockScannerService
             { "startBlock", 0L },
             { "endBlock", 0L },
             { "addresses", new HashSet<string>() },
+            { "distributionRecipients", new HashSet<string>() },
+            { "distributedUopt", 0m },
             { "txCount", 0 },
             { "blockCount", 0L }
         };
@@ -89,6 +95,8 @@ public class BlockScannerService
                         { "startBlock", blockHeight },
                         { "endBlock", blockHeight },
                         { "addresses", new HashSet<string>() },
+                        { "distributionRecipients", new HashSet<string>() },
+                        { "distributedUopt", 0m },
                         { "txCount", 0 },
                         { "blockCount", 0L }
                     };
@@ -100,6 +108,7 @@ public class BlockScannerService
 
                 currentDayStats["endBlock"] = blockHeight;
                 currentDayStats["blockCount"] = ((long)currentDayStats["blockCount"]) + 1;
+                await AddDistributionStatsFromBlockResultsAsync(blockHeight, denomWantedUpper, currentDayStats, ct);
 
                 // Extract transactions from this block
                 if (blockEl.TryGetProperty("data", out var dataEl) && dataEl.TryGetProperty("txs", out var txsEl) && txsEl.ValueKind == JsonValueKind.Array)
@@ -153,6 +162,8 @@ public class BlockScannerService
     private DailyStatsEntry BuildDailyStatsEntry(Dictionary<string, object> dayStats, string dateStr, string denomWantedUpper)
     {
         var addresses = (HashSet<string>)dayStats["addresses"];
+        var distributionRecipients = (HashSet<string>)dayStats["distributionRecipients"];
+        var distributedUopt = (decimal)dayStats["distributedUopt"];
         
         return new DailyStatsEntry
         {
@@ -167,9 +178,9 @@ public class BlockScannerService
             TotalLocked = null,
             TotalUnbonding = null,
             TotalLiquid = null,
-            DistributedOpt = null,
+            DistributedOpt = distributedUopt > 0 ? distributedUopt : null,
             EmittedOpt = null,
-            NetEmittedOpt = null,
+            NetEmittedOpt = distributedUopt > 0 ? -distributedUopt : null,
             Lock6m = null,
             Lock12m = null,
             Lock18m = null,
@@ -177,7 +188,7 @@ public class BlockScannerService
             LockOther = null,
             SentOpt = null,
             RecvOpt = null,
-            UniqueCounterparties = null
+            UniqueCounterparties = distributionRecipients.Count > 0 ? distributionRecipients.Count : null
         };
     }
 
@@ -193,6 +204,8 @@ public class BlockScannerService
         decimal totalStaked = 0;
         decimal totalUnbonding = 0;
         decimal totalLocked = 0;
+        var distributionRecipients = (HashSet<string>)dayStats["distributionRecipients"];
+        var distributedUopt = (decimal)dayStats["distributedUopt"];
 
         try
         {
@@ -291,9 +304,9 @@ public class BlockScannerService
             TotalLocked = totalLocked > 0 ? totalLocked : null,
             TotalLiquid = null,
             TotalLiquidPlus = totalLiquidPlus,
-            DistributedOpt = null,
+            DistributedOpt = distributedUopt > 0 ? distributedUopt : null,
             EmittedOpt = null,
-            NetEmittedOpt = null,
+            NetEmittedOpt = distributedUopt > 0 ? -distributedUopt : null,
             Lock6m = null,
             Lock12m = null,
             Lock18m = null,
@@ -301,7 +314,7 @@ public class BlockScannerService
             LockOther = null,
             SentOpt = null,
             RecvOpt = null,
-            UniqueCounterparties = null
+            UniqueCounterparties = distributionRecipients.Count > 0 ? distributionRecipients.Count : null
         };
     }
 
@@ -313,5 +326,185 @@ public class BlockScannerService
         {
             addresses.Add(match.Value);
         }
+    }
+
+    private async Task AddDistributionStatsFromBlockResultsAsync(
+        long blockHeight,
+        string denomWantedUpper,
+        Dictionary<string, object> dayStats,
+        CancellationToken ct)
+    {
+        if (_rpcHttp is null)
+            return;
+
+        using var blockResults = await ServiceUtils.TryGetJsonAsync(_rpcHttp, $"block_results?height={blockHeight}", ct);
+        if (blockResults is null)
+            return;
+
+        if (!blockResults.RootElement.TryGetProperty("result", out var result) ||
+            !result.TryGetProperty("txs_results", out var txResults) ||
+            txResults.ValueKind != JsonValueKind.Array)
+            return;
+
+        var recipients = (HashSet<string>)dayStats["distributionRecipients"];
+        var distributedUopt = (decimal)dayStats["distributedUopt"];
+
+        foreach (var tx in txResults.EnumerateArray())
+        {
+            if (!tx.TryGetProperty("events", out var events) || events.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var ev in events.EnumerateArray())
+            {
+                var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
+                if (!string.Equals(type, "transfer", StringComparison.Ordinal))
+                    continue;
+
+                var attrs = ReadEventAttributes(ev);
+                foreach (var entry in ParseTransferEventTuples(attrs, denomWantedUpper))
+                {
+                    if (!entry.Sender.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (entry.Recipient.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase) ||
+                        entry.Recipient.Equals(FeeRecipientAddress, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (entry.AmountUopt <= 0m)
+                        continue;
+
+                    distributedUopt += entry.AmountUopt;
+                    recipients.Add(entry.Recipient);
+                }
+            }
+        }
+
+        dayStats["distributedUopt"] = distributedUopt;
+    }
+
+    private static List<(string Key, string Value)> ReadEventAttributes(JsonElement ev)
+    {
+        var attrs = new List<(string Key, string Value)>();
+        if (!ev.TryGetProperty("attributes", out var attrArray) || attrArray.ValueKind != JsonValueKind.Array)
+            return attrs;
+
+        foreach (var attr in attrArray.EnumerateArray())
+        {
+            var key = attr.TryGetProperty("key", out var keyEl) ? keyEl.GetString() ?? "" : "";
+            var value = attr.TryGetProperty("value", out var valueEl) ? valueEl.GetString() ?? "" : "";
+            key = DecodeBase64Maybe(key);
+            value = DecodeBase64Maybe(value);
+            if (key.Length > 0)
+                attrs.Add((key, value));
+        }
+
+        return attrs;
+    }
+
+    private static List<(string Sender, string Recipient, decimal AmountUopt)> ParseTransferEventTuples(
+        List<(string Key, string Value)> attrs,
+        string denomWantedUpper)
+    {
+        var entries = new List<(string Sender, string Recipient, decimal AmountUopt)>();
+        var senders = new List<string>();
+        var recipients = new List<string>();
+        var amountStrings = new List<string>();
+
+        foreach (var (key, value) in attrs)
+        {
+            if (key == "sender" && !string.IsNullOrWhiteSpace(value))
+                senders.Add(value);
+            else if (key == "recipient" && !string.IsNullOrWhiteSpace(value))
+                recipients.Add(value);
+            else if (key == "amount" && !string.IsNullOrWhiteSpace(value))
+                amountStrings.Add(value);
+        }
+
+        var count = Math.Min(Math.Min(senders.Count, recipients.Count), amountStrings.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var amount = ParseAmountFieldUopt(amountStrings[i], denomWantedUpper);
+            if (amount > 0m)
+                entries.Add((senders[i], recipients[i], amount));
+        }
+
+        return entries;
+    }
+
+    private static decimal ParseAmountFieldUopt(string amountField, string denomWantedUpper)
+    {
+        if (string.IsNullOrWhiteSpace(amountField))
+            return 0m;
+
+        var total = 0m;
+        foreach (var part in amountField.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (TryParseSingleCoinUopt(part, denomWantedUpper, out var amountUnits))
+                total += amountUnits;
+        }
+
+        return total;
+    }
+
+    private static bool TryParseSingleCoinUopt(string part, string denomWantedUpper, out decimal amountUnits)
+    {
+        amountUnits = 0m;
+        if (string.IsNullOrWhiteSpace(part))
+            return false;
+
+        var trimmed = part.Trim();
+        var i = 0;
+        if (trimmed[0] == '-')
+            i = 1;
+
+        for (; i < trimmed.Length; i++)
+        {
+            if (!char.IsDigit(trimmed[i]))
+                break;
+        }
+
+        if (i == 0 || i >= trimmed.Length)
+            return false;
+
+        var denom = trimmed[i..];
+        if (!string.Equals(denom.ToUpperInvariant(), denomWantedUpper, StringComparison.Ordinal))
+            return false;
+
+        return decimal.TryParse(trimmed[..i].Replace("_", ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out amountUnits);
+    }
+
+    private static string DecodeBase64Maybe(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return value;
+
+        try
+        {
+            var normalized = value.Trim();
+            var mod = normalized.Length % 4;
+            if (mod != 0)
+                normalized += new string('=', 4 - mod);
+
+            var bytes = Convert.FromBase64String(normalized);
+            var decoded = System.Text.Encoding.UTF8.GetString(bytes);
+            return IsMostlyPrintable(decoded) ? decoded : value;
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
+    private static bool IsMostlyPrintable(string value)
+    {
+        foreach (var ch in value)
+        {
+            if (ch is '\r' or '\n' or '\t')
+                continue;
+            if (ch < 32 || ch > 126)
+                return false;
+        }
+
+        return value.Length > 0;
     }
 }

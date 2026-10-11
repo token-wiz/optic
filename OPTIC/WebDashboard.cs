@@ -16,10 +16,15 @@ using OPTIC.Services;
 public static class WebDashboard
 {
     private const string HistoricalEmissionDepositAddress = "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
+    private const string DistributionSourceAddress = "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
+    private const string FeeRecipientAddress = "optio17xpfvakm2amg962yls6f84z3kell8c5l9yn0qn";
     private static decimal? _historicalEmissionDepositCache;
     private static DateTimeOffset _historicalEmissionDepositCacheTime;
+    private static List<DailyDistributionPoint>? _dailyDistributionCache;
+    private static DateTimeOffset _dailyDistributionCacheTime;
     private static List<TopWalletEntry>? _top100WalletCache;
     private static DateTimeOffset _top100WalletCacheTime;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTime> _blockTimeCache = new();
 
     public static async Task RunAsync(string host, int port)
     {
@@ -180,6 +185,41 @@ public static class WebDashboard
             }
         });
 
+        app.MapGet("/api/distributions/daily", async (HttpContext ctx) =>
+        {
+            try
+            {
+                var rows = (await syncService.GetAllDailyStatsAsync())
+                    .Where(s => (s.DistributedOpt ?? 0m) > 0m || (s.UniqueCounterparties ?? 0) > 0)
+                    .OrderBy(s => s.Date, StringComparer.Ordinal)
+                    .Select(s => new DailyDistributionPoint
+                    {
+                        Date = s.Date,
+                        DistributedOpt = s.DistributedOpt ?? 0m,
+                        WalletCount = s.UniqueCounterparties ?? 0
+                    })
+                    .ToList();
+                ctx.Response.ContentType = "application/json; charset=utf-8";
+                return Results.Json(new
+                {
+                    source = DistributionSourceAddress,
+                    sourceType = "synced",
+                    rows = rows.Select(r => new
+                    {
+                        date = r.Date,
+                        distributedOpt = r.DistributedOpt,
+                        walletCount = r.WalletCount
+                    }).ToList()
+                });
+            }
+            catch (Exception ex)
+            {
+                ctx.Response.StatusCode = 500;
+                ctx.Response.ContentType = "application/json; charset=utf-8";
+                return Results.Json(new { error = ex.Message });
+            }
+        });
+
         app.MapGet("/api/summary", async (HttpContext ctx) =>
         {
             try
@@ -255,6 +295,81 @@ public static class WebDashboard
             }
         });
 
+        app.MapGet("/api/price/daily", async (HttpContext ctx) =>
+        {
+            try
+            {
+                var series = await TokenPriceService.GetDailySeriesAsync(ctx.RequestAborted);
+                return Results.Json(new
+                {
+                    source = "CoinMarketCap (OPT/USD)",
+                    rows = series.Select(p => new { date = p.DateUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), priceUsd = p.CloseUsd })
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: 500);
+            }
+        });
+
+        app.MapGet("/api/distributions/address", async (HttpContext ctx) =>
+        {
+            var address = (ctx.Request.Query["address"].ToString() ?? "").Trim().ToLowerInvariant();
+            var asCsv = string.Equals(ctx.Request.Query["format"], "csv", StringComparison.OrdinalIgnoreCase);
+            if (!System.Text.RegularExpressions.Regex.IsMatch(address, "^optio1[02-9ac-hj-np-z]{38,58}$"))
+                return Results.Json(new { error = "Enter a valid optio1... wallet address." }, statusCode: 400);
+
+            try
+            {
+                var report = await GetAddressDistributionReportAsync(address, ctx.RequestAborted);
+                if (asCsv)
+                {
+                    var csv = new System.Text.StringBuilder();
+                    csv.AppendLine("time_utc,height,tx_hash,amount_opt,price_usd,value_usd,price_interval,price_candle_open_utc");
+                    foreach (var r in report.Rows)
+                    {
+                        csv.Append(r.TimeUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)).Append(',')
+                           .Append(r.Height.ToString(CultureInfo.InvariantCulture)).Append(',')
+                           .Append(r.TxHash).Append(',')
+                           .Append(r.AmountOpt.ToString("0.######", CultureInfo.InvariantCulture)).Append(',')
+                           .Append(r.PriceUsd?.ToString("0.##########", CultureInfo.InvariantCulture) ?? "").Append(',')
+                           .Append(r.ValueUsd?.ToString("0.####", CultureInfo.InvariantCulture) ?? "").Append(',')
+                           .Append(r.PriceInterval ?? "").Append(',')
+                           .AppendLine(r.PriceCandleOpenUtc?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "");
+                    }
+                    return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"distributions-{address}.csv");
+                }
+
+                var priceRange = TokenPriceService.AvailableRange;
+                return Results.Json(new
+                {
+                    address,
+                    source = DistributionSourceAddress,
+                    priceSource = "CoinMarketCap (OPT/USD)",
+                    priceDataFrom = priceRange.FirstUtc,
+                    priceDataTo = priceRange.LastUtc,
+                    totalOpt = report.Rows.Sum(r => r.AmountOpt),
+                    totalValueUsd = report.Rows.Sum(r => r.ValueUsd ?? 0m),
+                    unpricedCount = report.Rows.Count(r => r.PriceUsd is null),
+                    truncated = report.Truncated,
+                    rows = report.Rows.Select(r => new
+                    {
+                        timeUtc = r.TimeUtc,
+                        height = r.Height,
+                        txHash = r.TxHash,
+                        amountOpt = r.AmountOpt,
+                        priceUsd = r.PriceUsd,
+                        valueUsd = r.ValueUsd,
+                        priceInterval = r.PriceInterval
+                    })
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: 500);
+            }
+        });
+
         Console.WriteLine($"Starting OPTIC web dashboard at {url}");
         await app.RunAsync($"http://{host}:{port}");
     }
@@ -293,7 +408,8 @@ public static class WebDashboard
                 HistoricalEmissionDepositAddress,
                 denomWantedUpper,
                 pageLimit,
-                maxPages);
+                maxPages,
+                useCoinReceivedEvents: true);
 
             if (totalUopt <= BigInteger.Zero)
             {
@@ -303,7 +419,8 @@ public static class WebDashboard
                     HistoricalEmissionDepositAddress,
                     denomWantedUpper,
                     pageLimit,
-                    maxPages);
+                    maxPages,
+                    useCoinReceivedEvents: false);
             }
 
             var totalOpt = ToDecimalOpt(totalUopt, scaleInt);
@@ -317,13 +434,414 @@ public static class WebDashboard
         }
     }
 
+    static async Task<List<DailyDistributionPoint>> GetDailyDistributionPointsAsync()
+    {
+        if (_dailyDistributionCache is not null &&
+            DateTimeOffset.UtcNow - _dailyDistributionCacheTime < TimeSpan.FromMinutes(30))
+        {
+            return _dailyDistributionCache;
+        }
+
+        var cfg = LoadDashboardConfig();
+        var rpcBase = cfg.GetValueOrDefault("rpc", "http://127.0.0.1:26657");
+        var denom = cfg.GetValueOrDefault("denom", "uopt");
+        var denomWantedUpper = denom.ToUpperInvariant();
+        var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1;
+        var pageLimit = TryParseConfigInt(cfg, "pageLimit", 100);
+        var maxPages = TryParseConfigInt(cfg, "dailyDistributionPages", 20);
+
+        if (pageLimit <= 0) pageLimit = 100;
+        if (pageLimit > 100) pageLimit = 100;
+        if (maxPages <= 0) maxPages = 20;
+        if (maxPages > 20) maxPages = 20;
+
+        using var rpcHttp = new HttpClient
+        {
+            BaseAddress = new Uri(rpcBase.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromMinutes(5)
+        };
+
+        try
+        {
+            var rows = await GetDailyDistributionsFromRpcAsync(
+                rpcHttp,
+                $"message.sender='{DistributionSourceAddress}'",
+                denomWantedUpper,
+                scaleInt,
+                pageLimit,
+                maxPages);
+
+            _dailyDistributionCache = rows;
+            _dailyDistributionCacheTime = DateTimeOffset.UtcNow;
+            return rows;
+        }
+        catch
+        {
+            return _dailyDistributionCache ?? new List<DailyDistributionPoint>();
+        }
+    }
+
+    static async Task<List<DailyDistributionPoint>> GetDailyDistributionsFromRpcAsync(
+        HttpClient rpcHttp,
+        string query,
+        string denomWantedUpper,
+        int scaleInt,
+        int pageLimit,
+        int maxPages)
+    {
+        var perPage = Math.Clamp(pageLimit, 1, 100);
+        var pages = Math.Clamp(maxPages, 1, 1000);
+        var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var transferHits = new List<(long Height, List<(string Recipient, BigInteger AmountUopt)> Transfers)>();
+        var byDate = new Dictionary<string, (BigInteger AmountUopt, HashSet<string> Recipients)>(StringComparer.Ordinal);
+
+        for (var page = 1; page <= pages; page++)
+        {
+            var payload = new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tx_search",
+                @params = new
+                {
+                    query,
+                    page = page.ToString(CultureInfo.InvariantCulture),
+                    per_page = perPage.ToString(CultureInfo.InvariantCulture),
+                    order_by = "desc",
+                    prove = false
+                }
+            };
+
+            using var content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await rpcHttp.PostAsync("", content);
+            }
+            catch
+            {
+                break;
+            }
+
+            using (response)
+            {
+            if (!response.IsSuccessStatusCode)
+                break;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("txs", out var txs) ||
+                txs.ValueKind != JsonValueKind.Array)
+                break;
+
+            var count = 0;
+            foreach (var tx in txs.EnumerateArray())
+            {
+                count++;
+                var hash = tx.TryGetProperty("hash", out var hashEl) ? hashEl.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(hash) && !seenHashes.Add(hash))
+                    continue;
+
+                var transfers = GetDistributionTransfersFromTxSearchResult(tx, denomWantedUpper);
+                if (transfers.Count == 0)
+                    continue;
+
+                if (!TryGetTxHeight(tx, out var height))
+                    continue;
+
+                transferHits.Add((height, transfers));
+            }
+
+            if (count < perPage)
+                break;
+            }
+        }
+
+        var uniqueHeights = transferHits
+            .Select(hit => hit.Height)
+            .Distinct()
+            .ToList();
+        var blockTimeCache = new System.Collections.Concurrent.ConcurrentDictionary<long, DateTime>();
+        await Parallel.ForEachAsync(
+            uniqueHeights,
+            new ParallelOptions { MaxDegreeOfParallelism = 16 },
+            async (height, _) =>
+            {
+                var fetched = await TryGetBlockTimeFromRpcAsync(rpcHttp, height);
+                if (fetched.HasValue)
+                    blockTimeCache[height] = fetched.Value;
+            });
+
+        foreach (var hit in transferHits)
+        {
+            if (!blockTimeCache.TryGetValue(hit.Height, out var blockTimeUtc))
+                continue;
+
+            var date = blockTimeUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (!byDate.TryGetValue(date, out var existing))
+                    existing = (BigInteger.Zero, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+                foreach (var transfer in hit.Transfers)
+                {
+                    existing.AmountUopt += transfer.AmountUopt;
+                    existing.Recipients.Add(transfer.Recipient);
+                }
+
+                byDate[date] = existing;
+        }
+
+        return byDate
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => new DailyDistributionPoint
+            {
+                Date = kv.Key,
+                DistributedOpt = ToDecimalOpt(kv.Value.AmountUopt, scaleInt),
+                WalletCount = kv.Value.Recipients.Count
+            })
+            .ToList();
+    }
+
+    static async Task<AddressDistributionReport> GetAddressDistributionReportAsync(string address, CancellationToken ct)
+    {
+        var cfg = LoadDashboardConfig();
+        var rpcBase = cfg.GetValueOrDefault("rpc", "http://127.0.0.1:26657");
+        var denom = cfg.GetValueOrDefault("denom", "uopt");
+        var denomWantedUpper = denom.ToUpperInvariant();
+        var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1;
+        const int perPage = 100;
+        const int maxPages = 200;
+
+        using var rpcHttp = new HttpClient
+        {
+            BaseAddress = new Uri(rpcBase.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromMinutes(2)
+        };
+
+        // Query by recipient only and filter the sender locally: adding transfer.sender to the
+        // tx_search query makes the node's indexer ~25x slower.
+        var report = new AddressDistributionReport();
+        var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var query = $"transfer.recipient='{address}'";
+        for (var page = 1; ; page++)
+        {
+            if (page > maxPages)
+            {
+                report.Truncated = true;
+                break;
+            }
+
+            var payload = new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tx_search",
+                @params = new
+                {
+                    query,
+                    page = page.ToString(CultureInfo.InvariantCulture),
+                    per_page = perPage.ToString(CultureInfo.InvariantCulture),
+                    order_by = "asc",
+                    prove = false
+                }
+            };
+
+            using var content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json");
+            using var response = await rpcHttp.PostAsync("", content, ct);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Node tx_search failed with HTTP {(int)response.StatusCode}.");
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("error", out var rpcError))
+            {
+                // CometBFT reports paging past the last page as an error.
+                if (page > 1) break;
+                throw new InvalidOperationException(rpcError.TryGetProperty("data", out var errData) ? errData.ToString() : rpcError.ToString());
+            }
+
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("txs", out var txs) ||
+                txs.ValueKind != JsonValueKind.Array)
+                break;
+
+            var count = 0;
+            foreach (var tx in txs.EnumerateArray())
+            {
+                count++;
+                var hash = tx.TryGetProperty("hash", out var hashEl) ? hashEl.GetString() ?? "" : "";
+                if (hash.Length > 0 && !seenHashes.Add(hash))
+                    continue;
+                if (!TryGetTxHeight(tx, out var height))
+                    continue;
+                if (!tx.TryGetProperty("tx_result", out var txResult) ||
+                    !txResult.TryGetProperty("events", out var events) ||
+                    events.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                var amountUopt = BigInteger.Zero;
+                foreach (var ev in events.EnumerateArray())
+                {
+                    var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
+                    if (!string.Equals(type, "transfer", StringComparison.Ordinal))
+                        continue;
+
+                    foreach (var entry in ParseTransferEventTuples(ReadCometEventAttributes(ev), denomWantedUpper))
+                    {
+                        if (entry.Sender.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase) &&
+                            entry.Recipient.Equals(address, StringComparison.OrdinalIgnoreCase))
+                            amountUopt += entry.AmountUnits;
+                    }
+                }
+
+                if (amountUopt > BigInteger.Zero)
+                    report.Rows.Add(new AddressDistributionRow { Height = height, TxHash = hash, AmountOpt = ToDecimalOpt(amountUopt, scaleInt) });
+            }
+
+            if (count < perPage)
+                break;
+        }
+
+        var missingHeights = report.Rows.Select(r => r.Height).Distinct().Where(h => !_blockTimeCache.ContainsKey(h)).ToList();
+        await Parallel.ForEachAsync(
+            missingHeights,
+            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            async (height, _) =>
+            {
+                var time = await TryGetBlockHeaderTimeAsync(rpcHttp, height);
+                if (time.HasValue)
+                    _blockTimeCache[height] = time.Value;
+            });
+
+        report.Rows.RemoveAll(r => !_blockTimeCache.ContainsKey(r.Height));
+        foreach (var row in report.Rows)
+            row.TimeUtc = _blockTimeCache[row.Height];
+        report.Rows.Sort((a, b) => a.Height.CompareTo(b.Height));
+
+        var prices = await TokenPriceService.GetPricesAtAsync(report.Rows.Select(r => r.TimeUtc).Distinct().ToList(), ct);
+        foreach (var row in report.Rows)
+        {
+            if (prices.TryGetValue(row.TimeUtc, out var price) && price is not null)
+            {
+                row.PriceUsd = price.PriceUsd;
+                row.PriceInterval = price.Interval;
+                row.PriceCandleOpenUtc = price.CandleOpenUtc;
+            }
+        }
+
+        return report;
+    }
+
+    static async Task<DateTime?> TryGetBlockHeaderTimeAsync(HttpClient rpcHttp, long height)
+    {
+        try
+        {
+            using var response = await rpcHttp.GetAsync($"header?height={height.ToString(CultureInfo.InvariantCulture)}");
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (doc.RootElement.TryGetProperty("result", out var result) &&
+                result.TryGetProperty("header", out var header) &&
+                header.TryGetProperty("time", out var timeEl) &&
+                DateTimeOffset.TryParse(timeEl.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+            {
+                return parsed.UtcDateTime;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    static List<(string Recipient, BigInteger AmountUopt)> GetDistributionTransfersFromTxSearchResult(
+        JsonElement tx,
+        string denomWantedUpper)
+    {
+        var transfers = new List<(string Recipient, BigInteger AmountUopt)>();
+        if (!tx.TryGetProperty("tx_result", out var txResult) ||
+            !txResult.TryGetProperty("events", out var events) ||
+            events.ValueKind != JsonValueKind.Array)
+            return transfers;
+
+        foreach (var ev in events.EnumerateArray())
+        {
+            var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
+            if (!string.Equals(type, "transfer", StringComparison.Ordinal))
+                continue;
+
+            var attrs = ReadCometEventAttributes(ev);
+            foreach (var entry in ParseTransferEventTuples(attrs, denomWantedUpper))
+            {
+                if (!entry.Sender.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (entry.Recipient.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase) ||
+                    entry.Recipient.Equals(FeeRecipientAddress, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (entry.AmountUnits > BigInteger.Zero)
+                    transfers.Add((entry.Recipient, entry.AmountUnits));
+            }
+        }
+
+        return transfers;
+    }
+
+    static bool TryGetTxHeight(JsonElement tx, out long height)
+    {
+        height = 0;
+        if (!tx.TryGetProperty("height", out var heightEl))
+            return false;
+
+        if (heightEl.ValueKind == JsonValueKind.String)
+            return long.TryParse(heightEl.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out height);
+
+        if (heightEl.ValueKind == JsonValueKind.Number)
+            return heightEl.TryGetInt64(out height);
+
+        return false;
+    }
+
+    static async Task<DateTime?> TryGetBlockTimeFromRpcAsync(HttpClient rpcHttp, long height)
+    {
+        try
+        {
+            using var response = await rpcHttp.GetAsync($"block?height={height.ToString(CultureInfo.InvariantCulture)}");
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("result", out var result) &&
+                result.TryGetProperty("block", out var block) &&
+                block.TryGetProperty("header", out var header) &&
+                header.TryGetProperty("time", out var timeEl) &&
+                DateTimeOffset.TryParse(timeEl.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+            {
+                return parsed.UtcDateTime;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
     static async Task<BigInteger> SumHistoricalReceivesFromRpcAsync(
         HttpClient rpcHttp,
         string query,
         string recipient,
         string denomWantedUpper,
         int pageLimit,
-        int maxPages)
+        int maxPages,
+        bool useCoinReceivedEvents)
     {
         BigInteger total = BigInteger.Zero;
         var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -372,7 +890,7 @@ public static class WebDashboard
                 if (!string.IsNullOrWhiteSpace(hash) && !seenHashes.Add(hash))
                     continue;
 
-                total += SumReceiveEventsFromTxSearchResult(tx, recipient, denomWantedUpper);
+                total += SumReceiveEventsFromTxSearchResult(tx, recipient, denomWantedUpper, useCoinReceivedEvents);
             }
 
             if (count < perPage)
@@ -382,7 +900,11 @@ public static class WebDashboard
         return total;
     }
 
-    static BigInteger SumReceiveEventsFromTxSearchResult(JsonElement tx, string recipient, string denomWantedUpper)
+    static BigInteger SumReceiveEventsFromTxSearchResult(
+        JsonElement tx,
+        string recipient,
+        string denomWantedUpper,
+        bool useCoinReceivedEvents)
     {
         if (!tx.TryGetProperty("tx_result", out var txResult) ||
             !txResult.TryGetProperty("events", out var events) ||
@@ -393,13 +915,12 @@ public static class WebDashboard
         foreach (var ev in events.EnumerateArray())
         {
             var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
-            if (!string.Equals(type, "coin_received", StringComparison.Ordinal) &&
-                !string.Equals(type, "transfer", StringComparison.Ordinal))
-                continue;
-
-            var attrs = ReadCometEventAttributes(ev);
-            if (string.Equals(type, "coin_received", StringComparison.Ordinal))
+            if (useCoinReceivedEvents)
             {
+                if (!string.Equals(type, "coin_received", StringComparison.Ordinal))
+                    continue;
+
+                var attrs = ReadCometEventAttributes(ev);
                 foreach (var entry in ParseCoinEventTuples(attrs, "receiver", denomWantedUpper))
                 {
                     if (entry.Party.Equals(recipient, StringComparison.OrdinalIgnoreCase))
@@ -408,6 +929,10 @@ public static class WebDashboard
             }
             else
             {
+                if (!string.Equals(type, "transfer", StringComparison.Ordinal))
+                    continue;
+
+                var attrs = ReadCometEventAttributes(ev);
                 foreach (var entry in ParseTransferEventTuples(attrs, denomWantedUpper))
                 {
                     if (entry.Recipient.Equals(recipient, StringComparison.OrdinalIgnoreCase))
@@ -1098,6 +1623,7 @@ public static class WebDashboard
             "dashboard" => "Dashboard",
             "top100" => "Top 100 Wallets",
             "distributions" => "Distributions & Ledger",
+            "address-distributions" => "Address Distributions",
             "locks" => "Locks & Staking",
             "counterparties" => "Counterparties",
             "network" => "Network Analysis",
@@ -2114,6 +2640,7 @@ public static class WebDashboard
                         <span class=""menu-label"">Reports</span>
                         <div class=""menu-dropdown"">
                             <a href=""/page/distributions"" class=""menu-item" + (page == "distributions" ? @""" active" : @"""") + @""">Distributions</a>
+                            <a href=""/page/address-distributions"" class=""menu-item" + (page == "address-distributions" ? @""" active" : @"""") + @""">Address Distributions</a>
                             <a href=""/page/locks"" class=""menu-item" + (page == "locks" ? @""" active" : @"""") + @""">Locks & Staking</a>
                             <a href=""/page/counterparties"" class=""menu-item" + (page == "counterparties" ? @""" active" : @"""") + @""">Counterparties</a>
                             <a href=""/page/network"" class=""menu-item" + (page == "network" ? @""" active" : @"""") + @""">Network</a>
@@ -2294,6 +2821,7 @@ public static class WebDashboard
                 <div class=""report-cards"">
 ");
         AppendWalletGrowthCard(sb);
+        AppendPriceChartCard(sb);
         AppendDailyStatsCard(sb);
         sb.Append(@"
                 </div>
@@ -2311,8 +2839,12 @@ public static class WebDashboard
                 AppendTop100Card(sb);
                 break;
             case "distributions":
+                AppendDailyDistributionReportCard(sb);
                 AppendDistributionsCard(sb);
                 AppendCounterpartiesCard(sb);
+                break;
+            case "address-distributions":
+                AppendAddressDistributionsCard(sb);
                 break;
             case "locks":
                 AppendLocksCard(sb);
@@ -2372,6 +2904,183 @@ public static class WebDashboard
     }
 
     // Report Card Methods
+    static void AppendDailyDistributionReportCard(System.Text.StringBuilder sb)
+    {
+        sb.Append(@"
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>Daily Distributions</h2>
+                        <div class=""card-content"">
+                            <div style=""display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;"">
+                                <div id=""daily-distribution-status"" style=""color: var(--text-secondary); font-size: 13px;"">Loading distributions from optio103r5...</div>
+                                <div id=""daily-distribution-totals"" style=""color: var(--text-secondary); font-size: 13px;""></div>
+                            </div>
+                            <div id=""daily-distribution-chart"" style=""height: 300px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-light); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); position: relative;"">
+                                Loading distribution chart...
+                            </div>
+                            <script>
+                                (function () {
+                                    const statusEl = document.getElementById('daily-distribution-status');
+                                    const totalsEl = document.getElementById('daily-distribution-totals');
+                                    const chartEl = document.getElementById('daily-distribution-chart');
+
+                                    const formatOpt = (value) => {
+                                        const numeric = Number(value || 0);
+                                        return Math.round(numeric).toLocaleString(undefined, { maximumFractionDigits: 0 });
+                                    };
+
+                                    const formatDate = (value) => {
+                                        const parts = (value || '').split('-');
+                                        if (parts.length !== 3) return value || '';
+                                        const date = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+                                        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
+                                    };
+
+                                    const parseDate = (value) => {
+                                        const parts = (value || '').split('-');
+                                        if (parts.length === 3) {
+                                            return new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+                                        }
+                                        return new Date(value);
+                                    };
+
+                                    async function loadDailyDistributionReport() {
+                                        try {
+                                            const response = await fetch('/api/distributions/daily');
+                                            const data = await response.json();
+                                            const rows = (data.rows || [])
+                                                .slice()
+                                                .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+
+                                            if (rows.length === 0) {
+                                                chartEl.innerHTML = '<div style=""color: var(--text-secondary);"">No distribution data found</div>';
+                                                statusEl.textContent = 'No outgoing distribution transfers found for optio103r5...';
+                                                totalsEl.textContent = '';
+                                                return;
+                                            }
+
+                                            const amounts = rows.map(r => Number(r.distributedOpt || 0));
+                                            const wallets = rows.map(r => Number(r.walletCount || 0));
+                                            const totalAmount = amounts.reduce((sum, value) => sum + value, 0);
+                                            const maxAmount = Math.max(...amounts, 1);
+                                            const maxWallets = Math.max(...wallets, 1);
+                                            const width = 1100;
+                                            const height = 240;
+                                            const padL = 68;
+                                            const padR = 68;
+                                            const padT = 16;
+                                            const padB = 32;
+                                            const plotW = width - padL - padR;
+                                            const plotH = height - padT - padB;
+                                            const xStep = rows.length > 1 ? plotW / (rows.length - 1) : 0;
+                                            const toAmountY = (v) => padT + plotH - (v / maxAmount) * plotH;
+                                            const toWalletY = (v) => padT + plotH - (v / maxWallets) * plotH;
+                                            const xFor = (i) => padL + i * xStep;
+                                            const amountPoints = amounts.map((v, i) => `${xFor(i)},${toAmountY(v)}`).join(' ');
+                                            const walletPoints = wallets.map((v, i) => `${xFor(i)},${toWalletY(v)}`).join(' ');
+                                            const gridLines = [0, 0.25, 0.5, 0.75, 1].map(p => {
+                                                const y = padT + p * plotH;
+                                                return `<line x1=""${padL}"" y1=""${y}"" x2=""${width - padR}"" y2=""${y}"" stroke=""var(--border)"" stroke-width=""1"" />`;
+                                            }).join('');
+
+                                            const maxTicks = 8;
+                                            const tickStep = rows.length > maxTicks ? Math.ceil(rows.length / maxTicks) : 1;
+                                            const xTickLabels = rows
+                                                .map((row, idx) => ({ row, idx }))
+                                                .filter(item => item.idx % tickStep === 0 || item.idx === rows.length - 1)
+                                                .map(item => {
+                                                    const d = parseDate(item.row.date);
+                                                    const label = isNaN(d.getTime()) ? item.row.date : d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+                                                    return `<text x=""${xFor(item.idx)}"" y=""${height - 8}"" fill=""var(--text-secondary)"" font-size=""10"" text-anchor=""middle"">${label}</text>`;
+                                                }).join('');
+
+                                            chartEl.innerHTML = `
+<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""xMinYMid meet"">
+  <rect x=""0"" y=""0"" width=""${width}"" height=""${height}"" fill=""var(--surface-light)""></rect>
+  ${gridLines}
+  <path d=""M ${amountPoints.replace(/ /g, ' L ')}"" fill=""none"" stroke=""var(--accent-primary)"" stroke-width=""2.5""></path>
+  <path d=""M ${walletPoints.replace(/ /g, ' L ')}"" fill=""none"" stroke=""#107c10"" stroke-width=""2"" stroke-dasharray=""5 5""></path>
+  <text x=""${padL - 8}"" y=""${padT + 4}"" fill=""var(--accent-primary)"" font-size=""10"" text-anchor=""end"">${formatOpt(maxAmount)} OPT</text>
+  <text x=""${padL - 8}"" y=""${height - padB}"" fill=""var(--accent-primary)"" font-size=""10"" text-anchor=""end"">0 OPT</text>
+  <text x=""${width - padR + 8}"" y=""${padT + 4}"" fill=""#107c10"" font-size=""10"">${Math.round(maxWallets).toLocaleString()} wallets</text>
+  <text x=""${width - padR + 8}"" y=""${height - padB}"" fill=""#107c10"" font-size=""10"">0 wallets</text>
+  ${xTickLabels}
+</svg>`;
+
+                                            const tooltip = document.createElement('div');
+                                            tooltip.style.position = 'absolute';
+                                            tooltip.style.pointerEvents = 'none';
+                                            tooltip.style.background = '#ffffff';
+                                            tooltip.style.border = '1px solid var(--border-strong)';
+                                            tooltip.style.borderRadius = '6px';
+                                            tooltip.style.padding = '6px 8px';
+                                            tooltip.style.fontSize = '11px';
+                                            tooltip.style.color = '#1b1a19';
+                                            tooltip.style.fontWeight = '600';
+                                            tooltip.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.18)';
+                                            tooltip.style.opacity = '0';
+                                            tooltip.style.transform = 'translate(-50%, -115%)';
+                                            if (getComputedStyle(chartEl).position === 'static') chartEl.style.position = 'relative';
+                                            chartEl.appendChild(tooltip);
+
+                                            const svg = chartEl.querySelector('svg');
+                                            if (svg) {
+                                                const svgNS = 'http://www.w3.org/2000/svg';
+                                                const hoverLine = document.createElementNS(svgNS, 'line');
+                                                hoverLine.setAttribute('y1', `${padT}`);
+                                                hoverLine.setAttribute('y2', `${height - padB}`);
+                                                hoverLine.setAttribute('stroke', 'var(--accent-light)');
+                                                hoverLine.setAttribute('stroke-width', '1');
+                                                hoverLine.setAttribute('stroke-dasharray', '4 4');
+                                                hoverLine.setAttribute('opacity', '0');
+                                                svg.appendChild(hoverLine);
+
+                                                const updateHover = (clientX) => {
+                                                    // Map through the SVG's screen transform; preserveAspectRatio 'meet' leaves letterbox space the element box doesn't account for.
+                                                    const ctm = svg.getScreenCTM();
+                                                    if (!ctm) return;
+                                                    const relX = (clientX - ctm.e) / ctm.a;
+                                                    const clamped = Math.max(padL, Math.min(width - padR, relX));
+                                                    const index = xStep === 0 ? 0 : Math.round((clamped - padL) / xStep);
+                                                    const safeIndex = Math.max(0, Math.min(rows.length - 1, index));
+                                                    const x = xFor(safeIndex);
+                                                    const row = rows[safeIndex];
+                                                    const y = Math.min(toAmountY(amounts[safeIndex]), toWalletY(wallets[safeIndex]));
+
+                                                    hoverLine.setAttribute('x1', `${x}`);
+                                                    hoverLine.setAttribute('x2', `${x}`);
+                                                    hoverLine.setAttribute('opacity', '1');
+                                                    tooltip.innerHTML = `${formatDate(row.date)}<br>${formatOpt(row.distributedOpt)} OPT<br>${Number(row.walletCount || 0).toLocaleString()} wallets`;
+                                                    const hostRect = chartEl.getBoundingClientRect();
+                                                    tooltip.style.left = `${ctm.a * x + ctm.e - hostRect.left}px`;
+                                                    tooltip.style.top = `${ctm.d * y + ctm.f - hostRect.top}px`;
+                                                    tooltip.style.opacity = '1';
+                                                };
+
+                                                svg.addEventListener('mousemove', (event) => updateHover(event.clientX));
+                                                svg.addEventListener('mouseenter', (event) => updateHover(event.clientX));
+                                                svg.addEventListener('mouseleave', () => {
+                                                    hoverLine.setAttribute('opacity', '0');
+                                                    tooltip.style.opacity = '0';
+                                                });
+                                            }
+
+                                            statusEl.textContent = `Source: ${data.source || 'optio103r5...'}`;
+                                            totalsEl.innerHTML = `<span style=""color: var(--accent-primary);"">Amount</span> / <span style=""color: #107c10;"">Wallet count</span> · ${rows.length.toLocaleString()} days · ${formatOpt(totalAmount)} OPT total`;
+                                        } catch (error) {
+                                            statusEl.textContent = 'Error loading daily distribution report: ' + error.message;
+                                            statusEl.style.color = 'var(--error)';
+                                            chartEl.innerHTML = '<div style=""color: var(--error);"">Unable to load distribution chart</div>';
+                                        }
+                                    }
+
+                                    loadDailyDistributionReport();
+                                })();
+                            </script>
+                        </div>
+                    </div>
+");
+    }
+
     static void AppendDistributionsCard(System.Text.StringBuilder sb)
     {
         sb.Append(@"
@@ -2625,6 +3334,126 @@ public static class WebDashboard
                             </form>
                         </div>
                     </div>
+");
+    }
+
+    static void AppendAddressDistributionsCard(System.Text.StringBuilder sb)
+    {
+        sb.Append(@"
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>Distributions to an Address</h2>
+                        <div class=""card-content"">
+                            <form id=""addr-dist-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px;"">
+                                <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
+                                    <label for=""addr-dist-input"">Wallet address</label>
+                                    <input type=""text"" id=""addr-dist-input"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
+                                </div>
+                                <button type=""submit"" id=""addr-dist-submit"">Get Distributions</button>
+                                <a id=""addr-dist-csv"" class=""header-link"" href=""#"" hidden>Download CSV</a>
+                            </form>
+                            <div id=""addr-dist-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;"">Lists every payout from the node distribution account (optio103r5...) to the wallet, priced at the OPT/USD rate for the hour it was paid.</div>
+                            <div id=""addr-dist-summary"" style=""display: none; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 12px;""></div>
+                            <div class=""data-table-wrap"" id=""addr-dist-table-wrap"" hidden>
+                                <table class=""data-table"">
+                                    <thead>
+                                        <tr>
+                                            <th>Time (UTC)</th>
+                                            <th>Block</th>
+                                            <th style=""text-align: right;"">Amount (OPT)</th>
+                                            <th style=""text-align: right;"">Price (USD)</th>
+                                            <th style=""text-align: right;"">Value (USD)</th>
+                                            <th>Tx</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id=""addr-dist-body""></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <script>
+                        (function () {
+                            const form = document.getElementById('addr-dist-form');
+                            const input = document.getElementById('addr-dist-input');
+                            const submit = document.getElementById('addr-dist-submit');
+                            const csvLink = document.getElementById('addr-dist-csv');
+                            const status = document.getElementById('addr-dist-status');
+                            const summary = document.getElementById('addr-dist-summary');
+                            const tableWrap = document.getElementById('addr-dist-table-wrap');
+                            const body = document.getElementById('addr-dist-body');
+                            const fmtOpt = (v) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+                            const fmtUsd = (v) => v == null ? '-' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            const fmtPrice = (v) => v == null ? '-' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+                            const fmtTime = (v) => String(v || '').replace('T', ' ').replace(/\.\d+/, '').replace('Z', '');
+                            const tile = (label, value) => `<div class=""metric-card""><div style=""color: var(--text-secondary); font-size: 12px;"">${label}</div><div style=""font-size: 18px; font-weight: 600; margin-top: 4px;"">${value}</div></div>`;
+
+                            const run = async (address) => {
+                                submit.disabled = true;
+                                csvLink.hidden = true;
+                                summary.style.display = 'none';
+                                tableWrap.hidden = true;
+                                status.textContent = 'Searching the node for distributions to this address. Wallets with a long history can take a minute...';
+                                try {
+                                    const qs = 'address=' + encodeURIComponent(address);
+                                    const response = await fetch('/api/distributions/address?' + qs);
+                                    const data = await response.json();
+                                    if (!response.ok) throw new Error(data.error || 'Request failed');
+                                    history.replaceState(null, '', '?' + qs);
+
+                                    const rows = data.rows || [];
+                                    if (rows.length === 0) {
+                                        status.textContent = 'No distributions from optio103r5... found for this address.';
+                                        return;
+                                    }
+
+                                    const pricedOpt = rows.filter(r => r.priceUsd != null).reduce((s, r) => s + r.amountOpt, 0);
+                                    summary.innerHTML =
+                                        tile('Distributions', rows.length.toLocaleString('en-US')) +
+                                        tile('Total OPT', fmtOpt(data.totalOpt)) +
+                                        tile('Total value (USD)', fmtUsd(data.totalValueUsd)) +
+                                        tile('Avg price (USD)', pricedOpt > 0 ? fmtPrice(data.totalValueUsd / pricedOpt) : '-') +
+                                        tile('First / last', fmtTime(rows[0].timeUtc).slice(0, 10) + ' to ' + fmtTime(rows[rows.length - 1].timeUtc).slice(0, 10));
+                                    summary.style.display = 'grid';
+
+                                    body.innerHTML = rows.slice().reverse().map(r => `
+                                        <tr>
+                                            <td>${fmtTime(r.timeUtc)}</td>
+                                            <td>${Number(r.height).toLocaleString('en-US')}</td>
+                                            <td class=""amount-cell"">${fmtOpt(r.amountOpt)}</td>
+                                            <td class=""amount-cell"" title=""${r.priceInterval === '1d' ? 'Daily close (no hourly price for this time)' : r.priceInterval === '1h' ? 'Hourly close' : 'No market price available'}"">${fmtPrice(r.priceUsd)}${r.priceInterval === '1d' ? '*' : ''}</td>
+                                            <td class=""amount-cell"">${fmtUsd(r.valueUsd)}</td>
+                                            <td class=""address-cell"" title=""${r.txHash}"">${String(r.txHash).slice(0, 10)}...</td>
+                                        </tr>`).join('');
+                                    tableWrap.hidden = false;
+
+                                    const notes = [`Source: ${data.source}. Prices: ${data.priceSource}, hourly close for the hour of each payout; * = daily close.`];
+                                    if (data.unpricedCount > 0) {
+                                        const to = data.priceDataTo ? fmtTime(data.priceDataTo).slice(0, 10) : null;
+                                        notes.push(`${data.unpricedCount.toLocaleString('en-US')} payout(s) have no price` + (to ? ` (market data ends ${to})` : '') + ' and are left out of the USD total.');
+                                    }
+                                    if (data.truncated) notes.push('Results were capped at 20,000 transactions.');
+                                    status.textContent = notes.join(' ');
+                                    csvLink.href = '/api/distributions/address?' + qs + '&format=csv';
+                                    csvLink.hidden = false;
+                                } catch (error) {
+                                    status.textContent = 'Error: ' + error.message;
+                                } finally {
+                                    submit.disabled = false;
+                                }
+                            };
+
+                            form.addEventListener('submit', (e) => {
+                                e.preventDefault();
+                                const address = input.value.trim();
+                                if (address) run(address);
+                            });
+
+                            const initial = new URLSearchParams(location.search).get('address');
+                            if (initial) {
+                                input.value = initial;
+                                run(initial);
+                            }
+                        })();
+                    </script>
 ");
     }
 
@@ -3094,6 +3923,7 @@ public static class WebDashboard
                                         tooltip.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.18)';
                                         tooltip.style.opacity = '0';
                                         tooltip.style.transform = 'translate(-50%, -110%)';
+                                        if (getComputedStyle(chartEl).position === 'static') chartEl.style.position = 'relative';
                                         chartEl.appendChild(tooltip);
 
                                         const svg = chartEl.querySelector('svg');
@@ -3118,8 +3948,10 @@ public static class WebDashboard
 
                                             const updateHover = (clientX) => {
                                                 if (!values.length) return;
-                                                const rect = svg.getBoundingClientRect();
-                                                const relX = (clientX - rect.left) / rect.width * width;
+                                                // Map through the SVG's screen transform; preserveAspectRatio 'meet' leaves letterbox space the element box doesn't account for.
+                                                const ctm = svg.getScreenCTM();
+                                                if (!ctm) return;
+                                                const relX = (clientX - ctm.e) / ctm.a;
                                                 const clamped = Math.max(padL, Math.min(width - padR, relX));
                                                 const index = xStep === 0 ? 0 : Math.round((clamped - padL) / xStep);
                                                 const safeIndex = Math.max(0, Math.min(values.length - 1, index));
@@ -3137,8 +3969,9 @@ public static class WebDashboard
                                                 hoverDot.setAttribute('opacity', '1');
 
                                                 tooltip.textContent = `${dateLabel}: ${values[safeIndex].toLocaleString()}`;
-                                                tooltip.style.left = `${(x / width) * 100}%`;
-                                                tooltip.style.top = `${y}px`;
+                                                const hostRect = chartEl.getBoundingClientRect();
+                                                tooltip.style.left = `${ctm.a * x + ctm.e - hostRect.left}px`;
+                                                tooltip.style.top = `${ctm.d * y + ctm.f - hostRect.top}px`;
                                                 tooltip.style.opacity = '1';
                                             };
 
@@ -3167,6 +4000,192 @@ public static class WebDashboard
                                 setActiveRangeButton('30');
                                 loadDailyStats();
                                 setInterval(loadDailyStats, 60000); // Refresh every minute
+                            </script>
+                        </div>
+                    </div>
+");
+    }
+
+    static void AppendPriceChartCard(System.Text.StringBuilder sb)
+    {
+        sb.Append(@"
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>OPT Price (USD)</h2>
+                        <div class=""card-content"">
+                            <div style=""display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;"">
+                                <div id=""price-chart-summary"" style=""color: var(--text-secondary); font-size: 13px;"">Loading price history...</div>
+                                <div id=""price-chart-ranges"" role=""group"" aria-label=""Time range"" style=""display: inline-flex; gap: 6px;""></div>
+                            </div>
+                            <div id=""price-chart"" style=""height: 240px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-light); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); position: relative;"">
+                                Loading price history...
+                            </div>
+                            <div id=""price-chart-note"" style=""color: var(--text-muted); font-size: 12px; margin-top: 6px;""></div>
+                            <script>
+                                (async function () {
+                                    const chartEl = document.getElementById('price-chart');
+                                    const summaryEl = document.getElementById('price-chart-summary');
+                                    const rangesEl = document.getElementById('price-chart-ranges');
+                                    const noteEl = document.getElementById('price-chart-note');
+                                    const ranges = [['3M', 92], ['6M', 183], ['1Y', 365], ['ALL', 0]];
+                                    const fmtPrice = (v) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+                                    const fmtAxis = (v) => v <= 0 ? '$0' : '$' + Number(v).toLocaleString('en-US', { maximumSignificantDigits: 3 });
+                                    const parseDate = (value) => {
+                                        const p = String(value || '').split('-').map(Number);
+                                        return new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+                                    };
+                                    const fmtDate = (value, opts) => parseDate(value).toLocaleDateString('en-US', Object.assign({ timeZone: 'UTC' }, opts));
+
+                                    let all = [];
+                                    let activeRange = 'ALL';
+
+                                    const render = () => {
+                                        const days = ranges.find(r => r[0] === activeRange)[1];
+                                        const lastDate = parseDate(all[all.length - 1].date);
+                                        const rows = days === 0 ? all : all.filter(r => (lastDate - parseDate(r.date)) / 86400000 < days);
+                                        const prices = rows.map(r => Number(r.priceUsd));
+
+                                        const width = 1100;
+                                        const height = 200;
+                                        const padL = 72;
+                                        const padR = 16;
+                                        const padT = 14;
+                                        const padB = 28;
+                                        const plotW = width - padL - padR;
+                                        const plotH = height - padT - padB;
+                                        const rawMax = Math.max(...prices);
+                                        const rawMin = Math.min(...prices);
+                                        const pad = (rawMax - rawMin) * 0.08 || rawMax * 0.05 || 1;
+                                        const maxVal = rawMax + pad;
+                                        const minVal = Math.max(0, rawMin - pad);
+                                        const xStep = rows.length > 1 ? plotW / (rows.length - 1) : 0;
+                                        const xFor = (i) => padL + i * xStep;
+                                        const toY = (v) => padT + plotH - ((v - minVal) / (maxVal - minVal)) * plotH;
+
+                                        const points = prices.map((v, i) => `${xFor(i)},${toY(v)}`).join(' L ');
+                                        const gridLines = [0, 0.5, 1].map(p => {
+                                            const y = padT + p * plotH;
+                                            const value = maxVal - p * (maxVal - minVal);
+                                            return `<line x1=""${padL}"" y1=""${y}"" x2=""${width - padR}"" y2=""${y}"" stroke=""var(--border)"" stroke-width=""1"" />` +
+                                                `<text x=""${padL - 8}"" y=""${y + 4}"" fill=""var(--text-secondary)"" font-size=""10"" text-anchor=""end"">${fmtAxis(value)}</text>`;
+                                        }).join('');
+
+                                        const maxTicks = 8;
+                                        const tickStep = rows.length > maxTicks ? Math.ceil(rows.length / maxTicks) : 1;
+                                        const xTicks = rows
+                                            .map((row, idx) => ({ row, idx }))
+                                            .filter(item => item.idx % tickStep === 0)
+                                            .map(item => `<text x=""${xFor(item.idx)}"" y=""${height - 8}"" fill=""var(--text-secondary)"" font-size=""10"" text-anchor=""middle"">${fmtDate(item.row.date, days === 0 || days > 183 ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' })}</text>`)
+                                            .join('');
+
+                                        chartEl.innerHTML = `
+<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""xMinYMid meet"" role=""img"" aria-label=""OPT daily closing price in USD"">
+  ${gridLines}
+  <path d=""M ${points}"" fill=""none"" stroke=""var(--accent-primary)"" stroke-width=""2"" stroke-linejoin=""round"" stroke-linecap=""round""></path>
+  ${xTicks}
+</svg>`;
+
+                                        const first = prices[0];
+                                        const last = prices[prices.length - 1];
+                                        const change = first > 0 ? (last - first) / first * 100 : 0;
+                                        const sign = change > 0 ? '+' : '';
+                                        summaryEl.innerHTML = `<span style=""color: var(--text-primary); font-weight: 600; font-size: 15px;"">${fmtPrice(last)}</span> ` +
+                                            `<span>close ${fmtDate(rows[rows.length - 1].date, { year: 'numeric', month: 'short', day: '2-digit' })}</span> · ` +
+                                            `<span>${sign}${change.toFixed(1)}% over ${activeRange === 'ALL' ? 'all history' : activeRange}</span>`;
+
+                                        const tooltip = document.createElement('div');
+                                        Object.assign(tooltip.style, {
+                                            position: 'absolute', pointerEvents: 'none', background: 'var(--surface)',
+                                            border: '1px solid var(--border-strong)', borderRadius: '6px', padding: '6px 8px',
+                                            fontSize: '11px', color: 'var(--text-primary)', fontWeight: '600',
+                                            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.18)', opacity: '0',
+                                            transform: 'translate(-50%, -115%)', whiteSpace: 'nowrap'
+                                        });
+                                        chartEl.appendChild(tooltip);
+
+                                        const svg = chartEl.querySelector('svg');
+                                        const svgNS = 'http://www.w3.org/2000/svg';
+                                        const hoverLine = document.createElementNS(svgNS, 'line');
+                                        hoverLine.setAttribute('y1', `${padT}`);
+                                        hoverLine.setAttribute('y2', `${height - padB}`);
+                                        hoverLine.setAttribute('stroke', 'var(--text-muted)');
+                                        hoverLine.setAttribute('stroke-width', '1');
+                                        hoverLine.setAttribute('stroke-dasharray', '4 4');
+                                        hoverLine.setAttribute('opacity', '0');
+                                        svg.appendChild(hoverLine);
+                                        const dot = document.createElementNS(svgNS, 'circle');
+                                        dot.setAttribute('r', '4');
+                                        dot.setAttribute('fill', 'var(--accent-primary)');
+                                        dot.setAttribute('stroke', 'var(--surface-light)');
+                                        dot.setAttribute('stroke-width', '2');
+                                        dot.setAttribute('opacity', '0');
+                                        svg.appendChild(dot);
+
+                                        const updateHover = (clientX) => {
+                                            const ctm = svg.getScreenCTM();
+                                            if (!ctm) return;
+                                            const relX = (clientX - ctm.e) / ctm.a;
+                                            const clamped = Math.max(padL, Math.min(width - padR, relX));
+                                            const index = xStep === 0 ? 0 : Math.round((clamped - padL) / xStep);
+                                            const i = Math.max(0, Math.min(rows.length - 1, index));
+                                            const x = xFor(i);
+                                            const y = toY(prices[i]);
+                                            hoverLine.setAttribute('x1', `${x}`);
+                                            hoverLine.setAttribute('x2', `${x}`);
+                                            hoverLine.setAttribute('opacity', '1');
+                                            dot.setAttribute('cx', `${x}`);
+                                            dot.setAttribute('cy', `${y}`);
+                                            dot.setAttribute('opacity', '1');
+                                            tooltip.innerHTML = `${fmtDate(rows[i].date, { year: 'numeric', month: 'short', day: '2-digit' })}<br>${fmtPrice(prices[i])}`;
+                                            const hostRect = chartEl.getBoundingClientRect();
+                                            tooltip.style.left = `${ctm.a * x + ctm.e - hostRect.left}px`;
+                                            tooltip.style.top = `${ctm.d * y + ctm.f - hostRect.top}px`;
+                                            tooltip.style.opacity = '1';
+                                        };
+                                        svg.addEventListener('mousemove', (e) => updateHover(e.clientX));
+                                        svg.addEventListener('mouseenter', (e) => updateHover(e.clientX));
+                                        svg.addEventListener('mouseleave', () => {
+                                            hoverLine.setAttribute('opacity', '0');
+                                            dot.setAttribute('opacity', '0');
+                                            tooltip.style.opacity = '0';
+                                        });
+                                    };
+
+                                    const renderRangeButtons = () => {
+                                        rangesEl.innerHTML = ranges.map(([label]) => {
+                                            const active = label === activeRange;
+                                            return `<button type=""button"" data-range=""${label}"" aria-pressed=""${active}"" style=""padding: 4px 10px; font-size: 11px; border-radius: 999px; border: 1px solid ${active ? 'var(--accent-primary)' : 'var(--border)'}; background: ${active ? 'var(--accent-primary)' : 'var(--surface)'}; color: ${active ? 'var(--bg-primary)' : 'var(--text-secondary)'}; cursor: pointer;"">${label}</button>`;
+                                        }).join('');
+                                    };
+                                    rangesEl.addEventListener('click', (e) => {
+                                        const btn = e.target.closest('button[data-range]');
+                                        if (!btn || all.length === 0) return;
+                                        activeRange = btn.dataset.range;
+                                        renderRangeButtons();
+                                        render();
+                                    });
+
+                                    try {
+                                        const response = await fetch('/api/price/daily');
+                                        const data = await response.json();
+                                        if (!response.ok) throw new Error(data.error || 'Request failed');
+                                        all = (data.rows || []).filter(r => r.priceUsd != null);
+                                        if (all.length === 0) {
+                                            chartEl.textContent = 'No price data available';
+                                            summaryEl.textContent = '';
+                                            return;
+                                        }
+
+                                        renderRangeButtons();
+                                        render();
+                                        const lastDate = parseDate(all[all.length - 1].date);
+                                        const staleDays = Math.floor((Date.now() - lastDate) / 86400000);
+                                        noteEl.textContent = `Daily close · ${data.source}` +
+                                            (staleDays > 2 ? ` · No market data since ${fmtDate(all[all.length - 1].date, { year: 'numeric', month: 'short', day: '2-digit' })}` : '');
+                                    } catch (error) {
+                                        chartEl.textContent = 'Error loading price data: ' + error.message;
+                                        summaryEl.textContent = '';
+                                    }
+                                })();
                             </script>
                         </div>
                     </div>
@@ -3294,6 +4313,7 @@ public static class WebDashboard
                                         tooltip.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.18)';
                                         tooltip.style.opacity = '0';
                                         tooltip.style.transform = 'translate(-50%, -110%)';
+                                        if (getComputedStyle(chartEl).position === 'static') chartEl.style.position = 'relative';
                                         chartEl.appendChild(tooltip);
 
                                         const svg = chartEl.querySelector('svg');
@@ -3318,8 +4338,10 @@ public static class WebDashboard
 
                                             const updateHover = (clientX) => {
                                                 if (!values.length) return;
-                                                const rect = svg.getBoundingClientRect();
-                                                const relX = (clientX - rect.left) / rect.width * width;
+                                                // Map through the SVG's screen transform; preserveAspectRatio 'meet' leaves letterbox space the element box doesn't account for.
+                                                const ctm = svg.getScreenCTM();
+                                                if (!ctm) return;
+                                                const relX = (clientX - ctm.e) / ctm.a;
                                                 const clamped = Math.max(padL, Math.min(width - padR, relX));
                                                 const index = xStep === 0 ? 0 : Math.round((clamped - padL) / xStep);
                                                 const safeIndex = Math.max(0, Math.min(values.length - 1, index));
@@ -3337,8 +4359,9 @@ public static class WebDashboard
                                                 hoverDot.setAttribute('opacity', '1');
 
                                                 tooltip.textContent = `${dateLabel}: ${values[safeIndex].toLocaleString()}`;
-                                                tooltip.style.left = `${(x / width) * 100}%`;
-                                                tooltip.style.top = `${y}px`;
+                                                const hostRect = chartEl.getBoundingClientRect();
+                                                tooltip.style.left = `${ctm.a * x + ctm.e - hostRect.left}px`;
+                                                tooltip.style.top = `${ctm.d * y + ctm.f - hostRect.top}px`;
                                                 tooltip.style.opacity = '1';
                                             };
 
@@ -3785,8 +4808,14 @@ public static class WebDashboard
         <p><strong>Command:</strong> <code>" + System.Net.WebUtility.HtmlEncode(args) + @"</code></p>
         ");
 
-        // Check if this is counterparties output and render specially
-        if (args.Contains("counterparties") && result.exitCode == 0)
+        // Check if this is recognized output and render specially
+        if (args.Contains("--distributions") && result.exitCode == 0)
+        {
+            var distributionsHtml = ParseAndRenderDistributions(result.output);
+            if (!string.IsNullOrEmpty(distributionsHtml))
+                sb.Append(distributionsHtml);
+        }
+        else if (args.Contains("counterparties") && result.exitCode == 0)
         {
             var counterpartiesHtml = ParseAndRenderCounterparties(result.output);
             sb.Append(counterpartiesHtml);
@@ -3884,6 +4913,78 @@ public static class WebDashboard
         </table>
         <p style=""color: var(--text-secondary); margin-top: 12px; font-size: 13px;"">
             Showing {rows.Count} lock{(rows.Count != 1 ? "s" : "")}
+        </p>
+");
+
+        return sb.ToString();
+    }
+
+    static string ParseAndRenderDistributions(string output)
+    {
+        var lines = output.Split('\n');
+        var rows = new List<(string Date, string Emitted, string Distributed, string Net)>();
+        var inDailySection = false;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("== Daily Emissions & Distributions", StringComparison.OrdinalIgnoreCase))
+            {
+                inDailySection = true;
+                continue;
+            }
+
+            if (!inDailySection)
+                continue;
+
+            if (line.StartsWith("==") && !line.StartsWith("== Daily Emissions & Distributions", StringComparison.OrdinalIgnoreCase))
+                break;
+
+            if (line.Length == 0 ||
+                line.StartsWith("Date ", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("---", StringComparison.Ordinal))
+                continue;
+
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length >= 4 && parts[0].Length == 10 && parts[0][4] == '-' && parts[0][7] == '-')
+                rows.Add((parts[0], parts[1], parts[2], parts[3]));
+        }
+
+        if (rows.Count == 0)
+            return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(@"
+        <h3 style=""margin-top: 24px; color: var(--text-primary);"">Daily Emissions & Distributions</h3>
+        <table class=""counterparties-table"">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th style=""text-align: right;"">Emitted (OPT)</th>
+                    <th style=""text-align: right;"">Distributed (OPT)</th>
+                    <th style=""text-align: right;"">Net (OPT)</th>
+                </tr>
+            </thead>
+            <tbody>
+");
+
+        foreach (var row in rows)
+        {
+            sb.Append($@"
+                <tr>
+                    <td>{System.Net.WebUtility.HtmlEncode(row.Date)}</td>
+                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(row.Emitted)}</td>
+                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(row.Distributed)}</td>
+                    <td class=""amount-cell"">{System.Net.WebUtility.HtmlEncode(row.Net)}</td>
+                </tr>
+");
+        }
+
+        sb.Append($@"
+            </tbody>
+        </table>
+        <p style=""color: var(--text-secondary); margin-top: 12px; font-size: 13px;"">
+            Showing the latest {rows.Count} daily page{(rows.Count != 1 ? "s" : "")} from the distribution scan.
         </p>
 ");
 
@@ -4298,4 +5399,29 @@ sealed class TopWalletEntry
     public decimal Lock24Months { get; set; }
     public decimal TotalLocked => Lock6Months + Lock12Months + Lock18Months + Lock24Months;
     public decimal Total => WalletBalance + Staked + Unbonding;
+}
+
+sealed class DailyDistributionPoint
+{
+    public string Date { get; set; } = "";
+    public decimal DistributedOpt { get; set; }
+    public int WalletCount { get; set; }
+}
+
+sealed class AddressDistributionRow
+{
+    public DateTime TimeUtc { get; set; }
+    public long Height { get; set; }
+    public string TxHash { get; set; } = "";
+    public decimal AmountOpt { get; set; }
+    public decimal? PriceUsd { get; set; }
+    public decimal? ValueUsd => PriceUsd.HasValue ? AmountOpt * PriceUsd.Value : null;
+    public string? PriceInterval { get; set; }
+    public DateTime? PriceCandleOpenUtc { get; set; }
+}
+
+sealed class AddressDistributionReport
+{
+    public List<AddressDistributionRow> Rows { get; set; } = new();
+    public bool Truncated { get; set; }
 }

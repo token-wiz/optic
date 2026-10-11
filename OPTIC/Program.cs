@@ -23,7 +23,7 @@ if (ParseHelpArg(args))
 
 if (ParseWebArg(args))
 {
-    var webPort = ParseWebPortArg(args) ?? 5070;
+    var webPort = ParseWebPortArg(args) ?? 80;
     var webHost = ParseWebHostArg(args);
     if (string.IsNullOrWhiteSpace(webHost))
         webHost = "127.0.0.1";
@@ -53,7 +53,9 @@ const int DefaultPageLimit = 100;
 const int DefaultMaxPages = 50000;
 const string ConfigFile = @"C:\workspace\optic\optic\optic.conf";
 const string DebugHash1 = "F91D4AF68E6B0CCF3EE514D88AC0E5AA04E4CC82564B54CEA2B0046BF7C4265B";
-const string DistributionSourceAddress = "optio1u28a7gj785a4d8g9n70wqujl8xc9wh7dyj9gen";
+const string EmissionDestinationAddress = "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
+const string FeeRecipientAddress = "optio17xpfvakm2amg962yls6f84z3kell8c5l9yn0qn";
+const string DistributionSourceAddress = "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
 bool HideStakingRewards = false;
 bool HideFeeRows = true;
 bool OnlyRecvTransactions = false;
@@ -66,7 +68,7 @@ bool ValidatorsNodesMode = ParseValidatorsNodesArg(args);
 bool WalletCountMode = ParseWalletCountArg(args);
 string emitterAddr = ParseEmitterArg(args) ?? DistributionSourceAddress;
 bool MultiSendSumMode = ParseMultiSendSumArg(args);
-string multiSendFromAddr = ParseMultiSendFromArg(args) ?? "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst";
+string multiSendFromAddr = ParseMultiSendFromArg(args) ?? EmissionDestinationAddress;
 long? multiSendLookbackBlocks = ParseLookbackBlocksArg(args);
 string? multiSendOutPath = ParseMultiSendOutPathArg(args);
 bool BlockScanMultiSend = ParseBlockScanMultiSendArg(args);
@@ -76,9 +78,9 @@ long? QueryHeight = ParseHeightArg(args, "--height") ?? 1062;
 int BlockScanTopSenders = ParseIntArg(args, "--top-senders") ?? 20;
 var BlockScanSenders = ParseSendersArg(args) ?? new List<string>
 {
-    "optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst",
-    "optio17xpfvakm2amg962yls6f84z3kell8c5l9yn0qn",
-    "optio1u28a7gj785a4d8g9n70wqujl8xc9wh7dyj9gen",
+        EmissionDestinationAddress,
+        FeeRecipientAddress,
+        DistributionSourceAddress,
 };
 bool WalletBalancesMode = ParseWalletBalancesArg(args);
 var WalletBalancesCsv = ParseWalletBalancesCsvArg(args);
@@ -86,7 +88,7 @@ bool WalletLocksReportMode = ParseWalletLocksReportArg(args);
 bool TotalStakedMode = ParseTotalStakedArg(args);
 bool TotalDistributedMode = ParseTotalDistributedArg(args);
 bool TotalsAllMode = ParseTotalsAllArg(args);
-string emissionAddress = ParseEmissionAddressArg(args) ?? "optio1u28a7gj785a4d8g9n70wqujl8xc9wh7dyj9gen";
+string emissionAddress = ParseEmissionAddressArg(args) ?? EmissionDestinationAddress;
 var cmcDailyYear = ParseCmcDailyYearArg(args);
 var cmcOutPath = ParseCmcOutPathArg(args) ?? "optio_daily_2025_cmc.csv";
 var cmcId = ParseCmcIdArg(args) ?? 35828;
@@ -241,7 +243,7 @@ if (args.Any(a => string.Equals(a, "--test-data", StringComparison.OrdinalIgnore
         
         Console.WriteLine();
         Console.WriteLine($"Test data seeding complete: {count} records added");
-        Console.WriteLine("You can now view the data in the web dashboard at http://127.0.0.1:5070/page/sync");
+        Console.WriteLine("You can now view the data in the web dashboard at http://127.0.0.1/page/sync");
     }
     catch (Exception ex)
     {
@@ -910,14 +912,14 @@ if (TotalDistributedMode)
     Console.WriteLine();
     Console.WriteLine("== Total Distributed (All Wallets) ==");
     Console.WriteLine($"Range: {startHeight}..{endHeight}");
-    Console.WriteLine($"Emission address: {emissionAddress}");
+    Console.WriteLine($"Distribution sender: {emitterAddr}");
 
     var distributedUopt = await GetTotalDistributedFromBlocksAsync(
         rpcHttp,
         denomWantedUpper,
         startHeight,
         endHeight,
-        emissionAddress);
+        emitterAddr);
 
     Console.WriteLine($"Total Distributed: {FormatOptFromUopt(distributedUopt, scaleInt)} OPT");
     return;
@@ -944,7 +946,8 @@ if (TotalsAllMode)
     Console.WriteLine();
     Console.WriteLine("== Totals (All Wallets) ==");
     Console.WriteLine($"Range: {startHeight}..{endHeight}");
-    Console.WriteLine($"Emission address: {emissionAddress}");
+    Console.WriteLine($"Emission destination: {emissionAddress}");
+    Console.WriteLine($"Distribution sender: {emitterAddr}");
 
     var wallets = await GetAllOptWalletsWithStakingAsync(http, denomWantedUpper, scale, null, emissionAddress);
     var totalStaked = wallets.Sum(w => w.StakedOPT);
@@ -961,7 +964,7 @@ if (TotalsAllMode)
         denomWantedUpper,
         startHeight,
         endHeight,
-        emissionAddress);
+        emitterAddr);
 
     var distOpt = decimal.Truncate((decimal)distributedUopt / scaleInt);
     var stakedOpt = decimal.Truncate(totalStaked);
@@ -1201,6 +1204,7 @@ var seenRow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 var totalEmittedUopt = BigInteger.Zero;
 var totalDistributedUopt = BigInteger.Zero;
 var computeTotals = IncludeTotals || TotalsOnly;
+var dailyEmissionDistribution = new Dictionary<string, (BigInteger EmittedUopt, BigInteger DistributedUopt)>(StringComparer.Ordinal);
 
 foreach (var tr in txByHash.Values)
 {
@@ -1385,10 +1389,12 @@ foreach (var tr in txByHash.Values)
 
     if (computeTotals)
     {
-        if (cometTx is not null)
-            AccumulateTotalsFromCometTx(cometTx, emitterAddr, denomWantedUpper, ref totalEmittedUopt, ref totalDistributedUopt);
-        else
-            AccumulateTotalsFromTxResponse(tr, emitterAddr, denomWantedUpper, ref totalEmittedUopt, ref totalDistributedUopt);
+        var dailyTotals = cometTx is not null
+            ? GetEmissionDistributionFromCometTx(cometTx, emissionAddress, emitterAddr, denomWantedUpper)
+            : GetEmissionDistributionFromTxResponse(tr, emissionAddress, emitterAddr, denomWantedUpper);
+        totalEmittedUopt += dailyTotals.EmittedUopt;
+        totalDistributedUopt += dailyTotals.DistributedUopt;
+        AddDailyEmissionDistribution(dailyEmissionDistribution, timeUtc, dailyTotals.EmittedUopt, dailyTotals.DistributedUopt);
     }
 
     foreach (var r in transferRows)
@@ -1424,7 +1430,12 @@ foreach (var ft in cometFallbackTxs)
     if (transferRows.Count == 0) continue;
 
     if (computeTotals)
-        AccumulateTotalsFromCometTx(ft.Tx, emitterAddr, denomWantedUpper, ref totalEmittedUopt, ref totalDistributedUopt);
+    {
+        var dailyTotals = GetEmissionDistributionFromCometTx(ft.Tx, emissionAddress, emitterAddr, denomWantedUpper);
+        totalEmittedUopt += dailyTotals.EmittedUopt;
+        totalDistributedUopt += dailyTotals.DistributedUopt;
+        AddDailyEmissionDistribution(dailyEmissionDistribution, timeUtc, dailyTotals.EmittedUopt, dailyTotals.DistributedUopt);
+    }
 
     var feeApplied = feeUnits > 0m &&
                      !string.IsNullOrWhiteSpace(feePayer) &&
@@ -1459,11 +1470,15 @@ foreach (var r in rows)
 }
 
 if (computeTotals)
+{
     totalDistributedUopt = SumDistributedToAddressUopt(rows, addr);
+    ReplaceDailyDistributedFromRows(dailyEmissionDistribution, rows, addr);
+}
 
 if (TotalsOnly && !CounterpartiesMode)
 {
     PrintTotals(totalEmittedUopt, totalDistributedUopt, scaleInt);
+    PrintDailyEmissionDistribution(dailyEmissionDistribution, scaleInt, maxRows: 20);
     return;
 }
 
@@ -1480,7 +1495,10 @@ if (rows.Count == 0)
 {
     Console.WriteLine("(tx responses found, but no matching events in desired denom)");
     if (IncludeTotals)
+    {
         PrintTotals(totalEmittedUopt, totalDistributedUopt, scaleInt);
+        PrintDailyEmissionDistribution(dailyEmissionDistribution, scaleInt, maxRows: 20);
+    }
     return;
 }
 
@@ -1754,7 +1772,10 @@ var endingUnits = summary.BankBalanceUnits ?? runningUnits;
 Console.WriteLine($"Ending balance over window (incl fees): {(endingUnits / scale).ToString("0.000000", CultureInfo.InvariantCulture)} OPT");
 
 if (IncludeTotals)
+{
     PrintTotals(totalEmittedUopt, totalDistributedUopt, scaleInt);
+    PrintDailyEmissionDistribution(dailyEmissionDistribution, scaleInt, maxRows: 20);
+}
 
 // ======================================================================
 // BELOW THIS POINT: ONLY METHODS + TYPES (NO TOP-LEVEL STATEMENTS)
@@ -2022,7 +2043,7 @@ static async Task RunBackfillAsync(
         Console.WriteLine($"Starting block scan from block {startBlock}...");
         Console.WriteLine();
 
-        var scanner = new BlockScannerService(http, channel);
+        var scanner = new BlockScannerService(http, channel, rpcHttp);
         var recordsAdded = 0;
         var lastDisplayedDate = "";
 
@@ -2886,7 +2907,7 @@ static void PrintHelp()
     Console.WriteLine("  --web-host <host>");
     Console.WriteLine("      Bind host for web dashboard (default: 127.0.0.1).");
     Console.WriteLine("  --web-port <port>");
-    Console.WriteLine("      Bind port for web dashboard (default: 5070).");
+    Console.WriteLine("      Bind port for web dashboard (default: 80).");
     Console.WriteLine("  --distributions [addr] | --distributions=<addr> | distributions");
     Console.WriteLine("      Run the default balances summary + ledger output.");
     Console.WriteLine("      Optional addr overrides addr= in optic.conf.");
@@ -2928,7 +2949,7 @@ static void PrintHelp()
     Console.WriteLine("  --wallet-count | wallet-count");
     Console.WriteLine("      Print total number of wallet addresses and exit.");
     Console.WriteLine("  --emitter <addr>");
-    Console.WriteLine($"      Emission address for totals (default: {DistributionSourceAddress}).");
+    Console.WriteLine($"      Distribution sender / authority account for distributed totals (default: {DistributionSourceAddress}).");
     Console.WriteLine("  --verbose | --verbose-scan");
     Console.WriteLine("      Print additional scan progress information.");
     Console.WriteLine();
@@ -2936,7 +2957,7 @@ static void PrintHelp()
     Console.WriteLine("  --multisend-sum | multisend-sum");
     Console.WriteLine("      Summarize multisend totals for a sender and exit.");
     Console.WriteLine("  --from <addr>");
-    Console.WriteLine("      Sender address (default: optio103r5ejt3gqyghvyel86hs5faru55r3w9kl4dst).");
+    Console.WriteLine($"      Sender address (default: {EmissionDestinationAddress}).");
     Console.WriteLine("  --lookback-blocks <n>");
     Console.WriteLine("      Look back N blocks from latest height.");
     Console.WriteLine("  --out <path>");
@@ -2970,7 +2991,7 @@ static void PrintHelp()
     Console.WriteLine("  --totals-all | totals-all");
     Console.WriteLine("      Print total distributed, staked, and locked OPT across all wallets.");
     Console.WriteLine("  --emission-address <addr>");
-    Console.WriteLine($"      Emission address for totals (default: {DistributionSourceAddress}).");
+    Console.WriteLine($"      Emission destination to exclude from wallet totals (default: {EmissionDestinationAddress}).");
     Console.WriteLine();
     Console.WriteLine("CoinMarketCap daily export:");
     Console.WriteLine("  --cmc-daily <year>");
@@ -3147,6 +3168,7 @@ static async Task<List<WalletBalance>> GetAllOptWalletsWithStakingAsync(
     var excludeAddresses = new List<string>
     {
         DistributionSourceAddress,
+        FeeRecipientAddress,
         emissionAddr
     };
 
@@ -5659,22 +5681,19 @@ static decimal SumMultiSendTransfersFromCometTx(CometTx tx, string denomWantedUp
     return totalUnits;
 }
 
-static void AccumulateTotalsFromTxResponse(
+static (BigInteger EmittedUopt, BigInteger DistributedUopt) GetEmissionDistributionFromTxResponse(
     TxResponse tr,
-    string emitterAddr,
-    string denomWantedUpper,
-    ref BigInteger totalEmittedUopt,
-    ref BigInteger totalDistributedUopt)
+    string emissionDestinationAddr,
+    string distributionSenderAddr,
+    string denomWantedUpper)
 {
-    if (string.IsNullOrWhiteSpace(emitterAddr)) return;
+    if (string.IsNullOrWhiteSpace(emissionDestinationAddr) &&
+        string.IsNullOrWhiteSpace(distributionSenderAddr))
+        return (BigInteger.Zero, BigInteger.Zero);
 
-    var minted = SumMintedUoptFromTxResponse(tr, emitterAddr, denomWantedUpper);
-    if (minted > BigInteger.Zero)
-        totalEmittedUopt += minted;
-
-    var distributed = SumDistributedUoptFromTxResponse(tr, emitterAddr, denomWantedUpper);
-    if (distributed > BigInteger.Zero)
-        totalDistributedUopt += distributed;
+    return (
+        SumMintedUoptFromTxResponse(tr, emissionDestinationAddr, denomWantedUpper),
+        SumDistributedUoptFromTxResponse(tr, distributionSenderAddr, denomWantedUpper));
 }
 
 static void AccumulateTotalsFromCometTx(
@@ -5693,6 +5712,37 @@ static void AccumulateTotalsFromCometTx(
     var distributed = SumDistributedUoptFromCometTx(tx, emitterAddr, denomWantedUpper);
     if (distributed > BigInteger.Zero)
         totalDistributedUopt += distributed;
+}
+
+static (BigInteger EmittedUopt, BigInteger DistributedUopt) GetEmissionDistributionFromCometTx(
+    CometTx tx,
+    string emissionDestinationAddr,
+    string distributionSenderAddr,
+    string denomWantedUpper)
+{
+    if (string.IsNullOrWhiteSpace(emissionDestinationAddr) &&
+        string.IsNullOrWhiteSpace(distributionSenderAddr))
+        return (BigInteger.Zero, BigInteger.Zero);
+
+    return (
+        SumMintedUoptFromCometTx(tx, emissionDestinationAddr, denomWantedUpper),
+        SumDistributedUoptFromCometTx(tx, distributionSenderAddr, denomWantedUpper));
+}
+
+static void AddDailyEmissionDistribution(
+    Dictionary<string, (BigInteger EmittedUopt, BigInteger DistributedUopt)> dailyTotals,
+    DateTime timeUtc,
+    BigInteger emittedUopt,
+    BigInteger distributedUopt)
+{
+    if (emittedUopt <= BigInteger.Zero && distributedUopt <= BigInteger.Zero)
+        return;
+
+    var key = timeUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    dailyTotals.TryGetValue(key, out var existing);
+    dailyTotals[key] = (
+        existing.EmittedUopt + emittedUopt,
+        existing.DistributedUopt + distributedUopt);
 }
 
 static decimal SumDelegateAmountsFromCometTx(CometTx tx, string denomWantedUpper)
@@ -6072,6 +6122,39 @@ static BigInteger SumDistributedToAddressUopt(List<LedgerRow> rows, string addr)
     }
 
     return total;
+}
+
+static void ReplaceDailyDistributedFromRows(
+    Dictionary<string, (BigInteger EmittedUopt, BigInteger DistributedUopt)> dailyTotals,
+    List<LedgerRow> rows,
+    string addr)
+{
+    var distributedByDay = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+
+    foreach (var row in rows)
+    {
+        if (!row.Direction.Equals("recv", StringComparison.OrdinalIgnoreCase)) continue;
+        if (!row.To.Equals(addr, StringComparison.OrdinalIgnoreCase)) continue;
+        if (!string.Equals(row.Label, "Distribution", StringComparison.OrdinalIgnoreCase)) continue;
+
+        var key = row.TimeUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        distributedByDay.TryGetValue(key, out var existing);
+        distributedByDay[key] = existing + new BigInteger(row.AmountInDenomUnits);
+    }
+
+    foreach (var key in dailyTotals.Keys.ToList())
+    {
+        distributedByDay.TryGetValue(key, out var distributed);
+        dailyTotals[key] = (dailyTotals[key].EmittedUopt, distributed);
+    }
+
+    foreach (var kv in distributedByDay)
+    {
+        if (dailyTotals.ContainsKey(kv.Key))
+            continue;
+
+        dailyTotals[kv.Key] = (BigInteger.Zero, kv.Value);
+    }
 }
 
 static bool IsStakingRewardRowFromTxResponse(TxResponse tr, LedgerRow row, string addr, string denomWantedUpper)
@@ -6748,24 +6831,12 @@ static bool HasMintEvidenceFromCometTx(CometTx tx, string emitterAddr, string de
 
 static BigInteger SumEmitterReceivesFromTxResponse(TxResponse tr, string emitterAddr, string denomWantedUpper)
 {
-    BigInteger total = BigInteger.Zero;
+    BigInteger coinReceivedTotal = BigInteger.Zero;
+    BigInteger transferTotal = BigInteger.Zero;
 
     foreach (var ev in tr.Events)
     {
-        if (ev.Type == "transfer")
-        {
-            var attrs = new List<(string Key, string Value)>(ev.Attributes.Count);
-            foreach (var a in ev.Attributes)
-                attrs.Add((a.Key ?? "", a.Value ?? ""));
-
-            var entries = ParseTransferEventTuplesBig(attrs, denomWantedUpper, out _);
-            foreach (var e in entries)
-            {
-                if (e.Recipient.Equals(emitterAddr, StringComparison.OrdinalIgnoreCase))
-                    total += e.AmountUnits;
-            }
-        }
-        else if (ev.Type == "coin_received")
+        if (ev.Type == "coin_received")
         {
             var attrs = new List<(string Key, string Value)>(ev.Attributes.Count);
             foreach (var a in ev.Attributes)
@@ -6775,34 +6846,35 @@ static BigInteger SumEmitterReceivesFromTxResponse(TxResponse tr, string emitter
             foreach (var e in entries)
             {
                 if (e.Party.Equals(emitterAddr, StringComparison.OrdinalIgnoreCase))
-                    total += e.AmountUnits;
+                    coinReceivedTotal += e.AmountUnits;
+            }
+        }
+        else if (ev.Type == "transfer")
+        {
+            var attrs = new List<(string Key, string Value)>(ev.Attributes.Count);
+            foreach (var a in ev.Attributes)
+                attrs.Add((a.Key ?? "", a.Value ?? ""));
+
+            var entries = ParseTransferEventTuplesBig(attrs, denomWantedUpper, out _);
+            foreach (var e in entries)
+            {
+                if (e.Recipient.Equals(emitterAddr, StringComparison.OrdinalIgnoreCase))
+                    transferTotal += e.AmountUnits;
             }
         }
     }
 
-    return total;
+    return coinReceivedTotal > BigInteger.Zero ? coinReceivedTotal : transferTotal;
 }
 
 static BigInteger SumEmitterReceivesFromCometTx(CometTx tx, string emitterAddr, string denomWantedUpper)
 {
-    BigInteger total = BigInteger.Zero;
+    BigInteger coinReceivedTotal = BigInteger.Zero;
+    BigInteger transferTotal = BigInteger.Zero;
 
     foreach (var ev in tx.Events)
     {
-        if (ev.Type == "transfer")
-        {
-            var attrs = new List<(string Key, string Value)>(ev.Attributes.Count);
-            foreach (var a in ev.Attributes)
-                attrs.Add((a.Key ?? "", a.Value ?? ""));
-
-            var entries = ParseTransferEventTuplesBig(attrs, denomWantedUpper, out _);
-            foreach (var e in entries)
-            {
-                if (e.Recipient.Equals(emitterAddr, StringComparison.OrdinalIgnoreCase))
-                    total += e.AmountUnits;
-            }
-        }
-        else if (ev.Type == "coin_received")
+        if (ev.Type == "coin_received")
         {
             var attrs = new List<(string Key, string Value)>(ev.Attributes.Count);
             foreach (var a in ev.Attributes)
@@ -6812,12 +6884,25 @@ static BigInteger SumEmitterReceivesFromCometTx(CometTx tx, string emitterAddr, 
             foreach (var e in entries)
             {
                 if (e.Party.Equals(emitterAddr, StringComparison.OrdinalIgnoreCase))
-                    total += e.AmountUnits;
+                    coinReceivedTotal += e.AmountUnits;
+            }
+        }
+        else if (ev.Type == "transfer")
+        {
+            var attrs = new List<(string Key, string Value)>(ev.Attributes.Count);
+            foreach (var a in ev.Attributes)
+                attrs.Add((a.Key ?? "", a.Value ?? ""));
+
+            var entries = ParseTransferEventTuplesBig(attrs, denomWantedUpper, out _);
+            foreach (var e in entries)
+            {
+                if (e.Recipient.Equals(emitterAddr, StringComparison.OrdinalIgnoreCase))
+                    transferTotal += e.AmountUnits;
             }
         }
     }
 
-    return total;
+    return coinReceivedTotal > BigInteger.Zero ? coinReceivedTotal : transferTotal;
 }
 
 static BigInteger SumMintEventAmountsFromTxResponse(TxResponse tr, string denomWantedUpper)
@@ -7216,7 +7301,61 @@ static void PrintTotals(BigInteger emittedUopt, BigInteger distributedUopt, int 
 {
     Console.WriteLine();
     Console.WriteLine("== Totals ==");
+    Console.WriteLine($"Total Emitted: {FormatOptFromUopt(emittedUopt, scale)} OPT ({emittedUopt} uOPT)");
     Console.WriteLine($"Total Distributed: {FormatOptFromUopt(distributedUopt, scale)} OPT ({distributedUopt} uOPT)");
+}
+
+static void PrintDailyEmissionDistribution(
+    Dictionary<string, (BigInteger EmittedUopt, BigInteger DistributedUopt)> dailyTotals,
+    int scale,
+    int maxRows)
+{
+    Console.WriteLine();
+    Console.WriteLine($"== Daily Emissions & Distributions (latest {maxRows}) ==");
+
+    const int DateWidth = 10;
+    const int AmountWidth = 24;
+    Console.WriteLine(
+        $"{LeftFixed("Date", DateWidth)} " +
+        $"{RightFixed("Emitted(OPT)", AmountWidth)} " +
+        $"{RightFixed("Distributed(OPT)", AmountWidth)} " +
+        $"{RightFixed("Net(OPT)", AmountWidth)}");
+    Console.WriteLine(new string('-', DateWidth + 1 + AmountWidth + 1 + AmountWidth + 1 + AmountWidth));
+
+    var rows = dailyTotals
+        .OrderByDescending(kv => kv.Key, StringComparer.Ordinal)
+        .Take(Math.Max(1, maxRows))
+        .ToList();
+
+    if (rows.Count == 0)
+    {
+        Console.WriteLine("(no daily emission or distribution totals found in the scanned window)");
+        return;
+    }
+
+    foreach (var kv in rows)
+    {
+        var emitted = kv.Value.EmittedUopt;
+        var distributed = kv.Value.DistributedUopt;
+        var net = emitted - distributed;
+        Console.WriteLine(
+            $"{LeftFixed(kv.Key, DateWidth)} " +
+            $"{RightFixed(FormatOptFromUopt(emitted, scale), AmountWidth)} " +
+            $"{RightFixed(FormatOptFromUopt(distributed, scale), AmountWidth)} " +
+            $"{RightFixed(FormatOptFromUopt(net, scale), AmountWidth)}");
+    }
+}
+
+static string LeftFixed(string value, int width)
+{
+    value ??= "";
+    return value.Length > width ? value[..width] : value.PadRight(width);
+}
+
+static string RightFixed(string value, int width)
+{
+    value ??= "";
+    return value.Length > width ? value[..width] : value.PadLeft(width);
 }
 
 static void RunTotalsDryRun(string emitterAddr, string denomWantedUpper, int scale)
