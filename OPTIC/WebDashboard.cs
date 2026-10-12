@@ -322,10 +322,13 @@ public static class WebDashboard
             try
             {
                 var report = await GetAddressDistributionReportAsync(address, ctx.RequestAborted);
+                if (int.TryParse(ctx.Request.Query["year"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
+                    report.Rows = report.Rows.Where(r => r.TimeUtc.Year == year).ToList();
+
                 if (asCsv)
                 {
                     var csv = new System.Text.StringBuilder();
-                    csv.AppendLine("time_utc,height,tx_hash,amount_opt,price_usd,value_usd,price_interval,price_candle_open_utc");
+                    csv.AppendLine("time_utc,height,tx_hash,amount_opt,price_usd,value_usd,price_interval,price_candle_open_utc,memo");
                     foreach (var r in report.Rows)
                     {
                         csv.Append(r.TimeUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)).Append(',')
@@ -335,9 +338,10 @@ public static class WebDashboard
                            .Append(r.PriceUsd?.ToString("0.##########", CultureInfo.InvariantCulture) ?? "").Append(',')
                            .Append(r.ValueUsd?.ToString("0.####", CultureInfo.InvariantCulture) ?? "").Append(',')
                            .Append(r.PriceInterval ?? "").Append(',')
-                           .AppendLine(r.PriceCandleOpenUtc?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "");
+                           .Append(r.PriceCandleOpenUtc?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "").Append(',')
+                           .AppendLine(CsvField(r.Memo));
                     }
-                    return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"distributions-{address}.csv");
+                    return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"distributions-{address}{(year > 0 ? "-" + year.ToString(CultureInfo.InvariantCulture) : "")}.csv");
                 }
 
                 var priceRange = TokenPriceService.AvailableRange;
@@ -357,10 +361,53 @@ public static class WebDashboard
                         timeUtc = r.TimeUtc,
                         height = r.Height,
                         txHash = r.TxHash,
+                        memo = r.Memo,
                         amountOpt = r.AmountOpt,
                         priceUsd = r.PriceUsd,
                         valueUsd = r.ValueUsd,
                         priceInterval = r.PriceInterval
+                    })
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: 500);
+            }
+        });
+
+        app.MapGet("/api/wallet/ledger", async (HttpContext ctx) =>
+        {
+            var address = (ctx.Request.Query["address"].ToString() ?? "").Trim().ToLowerInvariant();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(address, "^optio1[02-9ac-hj-np-z]{38,58}$"))
+                return Results.Json(new { error = "Enter a valid optio1... wallet address." }, statusCode: 400);
+
+            try
+            {
+                var ledger = await GetWalletLedgerAsync(address, ctx.RequestAborted);
+                var priceRange = TokenPriceService.AvailableRange;
+                var daily = await TokenPriceService.GetDailySeriesAsync(ctx.RequestAborted);
+                return Results.Json(new
+                {
+                    address,
+                    distributionSource = DistributionSourceAddress,
+                    priceSource = "CoinMarketCap (OPT/USD)",
+                    priceDataTo = priceRange.LastUtc,
+                    latestPrice = daily.Count > 0 ? daily[^1].CloseUsd : (decimal?)null,
+                    latestPriceDate = daily.Count > 0 ? daily[^1].DateUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null,
+                    truncated = ledger.Truncated,
+                    modules = ModuleAccounts,
+                    entries = ledger.Entries.Select(e => new
+                    {
+                        timeUtc = e.TimeUtc,
+                        height = e.Height,
+                        txHash = e.TxHash,
+                        memo = e.Memo,
+                        direction = e.Direction,
+                        counterparty = e.Counterparty,
+                        category = e.Category,
+                        amountOpt = e.AmountOpt,
+                        priceUsd = e.PriceUsd,
+                        priceInterval = e.PriceInterval
                     })
                 });
             }
@@ -606,35 +653,48 @@ public static class WebDashboard
             .ToList();
     }
 
-    static async Task<AddressDistributionReport> GetAddressDistributionReportAsync(string address, CancellationToken ct)
+    // Module accounts: bech32("optio", sha256(module name)[:20]).
+    static readonly Dictionary<string, string> ModuleAccounts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["optio1fl48vsnmsdzcv85q5d2q4z5ajdha8yu3qxeqje"] = "bonded_tokens_pool",
+        ["optio1tygms3xhhs3yv487phx3dw4a95jn7t7l5x93yd"] = "not_bonded_tokens_pool",
+        ["optio1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8jz5nz3"] = "distribution",
+        ["optio17xpfvakm2amg962yls6f84z3kell8c5l9yn0qn"] = "fee_collector",
+        ["optio10d07y265gmmuvt4z0w9aw880jnsr700j0lr2aa"] = "gov",
+        ["optio1m3h30wlvsf8llruxtpukdvsy0km2kum8avhhvw"] = "mint",
+        ["optio1njty28rqtpw6n59sjj4esw76enp4mg6gr7du2y"] = "lockup",
+    };
+
+    sealed record RpcContext(HttpClient Http, string DenomWantedUpper, int ScaleInt) : IDisposable
+    {
+        public void Dispose() => Http.Dispose();
+    }
+
+    static RpcContext CreateRpcContext()
     {
         var cfg = LoadDashboardConfig();
         var rpcBase = cfg.GetValueOrDefault("rpc", "http://127.0.0.1:26657");
         var denom = cfg.GetValueOrDefault("denom", "uopt");
-        var denomWantedUpper = denom.ToUpperInvariant();
-        var scaleInt = denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1;
-        const int perPage = 100;
-        const int maxPages = 200;
-
-        using var rpcHttp = new HttpClient
+        var http = new HttpClient
         {
             BaseAddress = new Uri(rpcBase.TrimEnd('/') + "/"),
             Timeout = TimeSpan.FromMinutes(2)
         };
+        return new RpcContext(http, denom.ToUpperInvariant(), denom.StartsWith("u", StringComparison.OrdinalIgnoreCase) ? 1_000_000 : 1);
+    }
 
-        // Query by recipient only and filter the sender locally: adding transfer.sender to the
-        // tx_search query makes the node's indexer ~25x slower.
-        var report = new AddressDistributionReport();
+    /// <summary>
+    /// Pages through tx_search (oldest first), calling onTx once per unique tx.
+    /// Returns true when the page cap was hit before the results ran out.
+    /// </summary>
+    static async Task<bool> SearchTxsAsync(HttpClient rpcHttp, string query, Action<JsonElement, string, long> onTx, CancellationToken ct)
+    {
+        const int perPage = 100;
+        const int maxPages = 200;
         var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var query = $"transfer.recipient='{address}'";
-        for (var page = 1; ; page++)
-        {
-            if (page > maxPages)
-            {
-                report.Truncated = true;
-                break;
-            }
 
+        for (var page = 1; page <= maxPages; page++)
+        {
             var payload = new
             {
                 jsonrpc = "2.0",
@@ -659,14 +719,14 @@ public static class WebDashboard
             if (doc.RootElement.TryGetProperty("error", out var rpcError))
             {
                 // CometBFT reports paging past the last page as an error.
-                if (page > 1) break;
+                if (page > 1) return false;
                 throw new InvalidOperationException(rpcError.TryGetProperty("data", out var errData) ? errData.ToString() : rpcError.ToString());
             }
 
             if (!doc.RootElement.TryGetProperty("result", out var result) ||
                 !result.TryGetProperty("txs", out var txs) ||
                 txs.ValueKind != JsonValueKind.Array)
-                break;
+                return false;
 
             var count = 0;
             foreach (var tx in txs.EnumerateArray())
@@ -675,39 +735,38 @@ public static class WebDashboard
                 var hash = tx.TryGetProperty("hash", out var hashEl) ? hashEl.GetString() ?? "" : "";
                 if (hash.Length > 0 && !seenHashes.Add(hash))
                     continue;
-                if (!TryGetTxHeight(tx, out var height))
-                    continue;
-                if (!tx.TryGetProperty("tx_result", out var txResult) ||
-                    !txResult.TryGetProperty("events", out var events) ||
-                    events.ValueKind != JsonValueKind.Array)
-                    continue;
-
-                var amountUopt = BigInteger.Zero;
-                foreach (var ev in events.EnumerateArray())
-                {
-                    var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
-                    if (!string.Equals(type, "transfer", StringComparison.Ordinal))
-                        continue;
-
-                    foreach (var entry in ParseTransferEventTuples(ReadCometEventAttributes(ev), denomWantedUpper))
-                    {
-                        if (entry.Sender.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase) &&
-                            entry.Recipient.Equals(address, StringComparison.OrdinalIgnoreCase))
-                            amountUopt += entry.AmountUnits;
-                    }
-                }
-
-                if (amountUopt > BigInteger.Zero)
-                    report.Rows.Add(new AddressDistributionRow { Height = height, TxHash = hash, AmountOpt = ToDecimalOpt(amountUopt, scaleInt) });
+                if (TryGetTxHeight(tx, out var height))
+                    onTx(tx, hash, height);
             }
 
             if (count < perPage)
-                break;
+                return false;
         }
 
-        var missingHeights = report.Rows.Select(r => r.Height).Distinct().Where(h => !_blockTimeCache.ContainsKey(h)).ToList();
+        return true;
+    }
+
+    /// <summary>The memo from a tx_search result's base64 TxRaw, or "" when absent or undecodable.</summary>
+    static string GetTxMemo(JsonElement tx)
+    {
+        try
+        {
+            if (!tx.TryGetProperty("tx", out var txEl) || txEl.ValueKind != JsonValueKind.String)
+                return "";
+            var raw = TxRaw.Parser.ParseFrom(Convert.FromBase64String(txEl.GetString() ?? ""));
+            return TxBody.Parser.ParseFrom(raw.BodyBytes).Memo?.Trim() ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    static async Task ResolveBlockTimesAsync(HttpClient rpcHttp, IEnumerable<long> heights, CancellationToken ct)
+    {
+        var missing = heights.Distinct().Where(h => !_blockTimeCache.ContainsKey(h)).ToList();
         await Parallel.ForEachAsync(
-            missingHeights,
+            missing,
             new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
             async (height, _) =>
             {
@@ -715,7 +774,30 @@ public static class WebDashboard
                 if (time.HasValue)
                     _blockTimeCache[height] = time.Value;
             });
+    }
 
+    static async Task<AddressDistributionReport> GetAddressDistributionReportAsync(string address, CancellationToken ct)
+    {
+        using var rpc = CreateRpcContext();
+
+        // Query by recipient only and filter the sender locally: adding transfer.sender to the
+        // tx_search query makes the node's indexer ~25x slower.
+        var report = new AddressDistributionReport();
+        report.Truncated = await SearchTxsAsync(rpc.Http, $"transfer.recipient='{address}'", (tx, hash, height) =>
+        {
+            var amountUopt = BigInteger.Zero;
+            foreach (var entry in GetTxTransfers(tx, rpc.DenomWantedUpper))
+            {
+                if (entry.Sender.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase) &&
+                    entry.Recipient.Equals(address, StringComparison.OrdinalIgnoreCase))
+                    amountUopt += entry.AmountUnits;
+            }
+
+            if (amountUopt > BigInteger.Zero)
+                report.Rows.Add(new AddressDistributionRow { Height = height, TxHash = hash, Memo = GetTxMemo(tx), AmountOpt = ToDecimalOpt(amountUopt, rpc.ScaleInt) });
+        }, ct);
+
+        await ResolveBlockTimesAsync(rpc.Http, report.Rows.Select(r => r.Height), ct);
         report.Rows.RemoveAll(r => !_blockTimeCache.ContainsKey(r.Height));
         foreach (var row in report.Rows)
             row.TimeUtc = _blockTimeCache[row.Height];
@@ -733,6 +815,97 @@ public static class WebDashboard
         }
 
         return report;
+    }
+
+    /// <summary>
+    /// Every OPT transfer into or out of the address, one entry per tx, direction and counterparty,
+    /// classified by counterparty and priced at the hour it happened.
+    /// </summary>
+    static async Task<WalletLedger> GetWalletLedgerAsync(string address, CancellationToken ct)
+    {
+        using var rpc = CreateRpcContext();
+        var ledger = new WalletLedger();
+        var byKey = new Dictionary<(string Hash, string Direction, string Counterparty), WalletLedgerEntry>();
+        var amounts = new Dictionary<(string Hash, string Direction, string Counterparty), BigInteger>();
+
+        void OnTx(JsonElement tx, string hash, long height)
+        {
+            foreach (var t in GetTxTransfers(tx, rpc.DenomWantedUpper))
+            {
+                var isIn = t.Recipient.Equals(address, StringComparison.OrdinalIgnoreCase);
+                var isOut = t.Sender.Equals(address, StringComparison.OrdinalIgnoreCase);
+                if (isIn == isOut)
+                    continue; // unrelated, or a transfer to itself
+
+                var direction = isIn ? "in" : "out";
+                var counterparty = (isIn ? t.Sender : t.Recipient).ToLowerInvariant();
+                var key = (hash, direction, counterparty);
+                if (!byKey.ContainsKey(key))
+                {
+                    byKey[key] = new WalletLedgerEntry
+                    {
+                        Height = height,
+                        TxHash = hash,
+                        Memo = GetTxMemo(tx),
+                        Direction = direction,
+                        Counterparty = counterparty,
+                        Category = ClassifyCounterparty(counterparty, isIn)
+                    };
+                    amounts[key] = BigInteger.Zero;
+                }
+                amounts[key] += t.AmountUnits;
+            }
+        }
+
+        // The node's indexer serves the two sides as separate queries; SearchTxsAsync dedupes
+        // within a query and byKey dedupes across them.
+        var truncatedIn = await SearchTxsAsync(rpc.Http, $"transfer.recipient='{address}'", OnTx, ct);
+        var truncatedOut = await SearchTxsAsync(rpc.Http, $"transfer.sender='{address}'", OnTx, ct);
+        ledger.Truncated = truncatedIn || truncatedOut;
+
+        foreach (var (key, entry) in byKey)
+            entry.AmountOpt = ToDecimalOpt(amounts[key], rpc.ScaleInt);
+        ledger.Entries = byKey.Values.Where(e => e.AmountOpt > 0m).ToList();
+
+        await ResolveBlockTimesAsync(rpc.Http, ledger.Entries.Select(e => e.Height), ct);
+        ledger.Entries.RemoveAll(e => !_blockTimeCache.ContainsKey(e.Height));
+        foreach (var entry in ledger.Entries)
+            entry.TimeUtc = _blockTimeCache[entry.Height];
+        // Within a block, receipts first so a same-block send can draw on them.
+        ledger.Entries.Sort((a, b) => a.Height != b.Height
+            ? a.Height.CompareTo(b.Height)
+            : string.CompareOrdinal(a.Direction, b.Direction));
+
+        var prices = await TokenPriceService.GetPricesAtAsync(ledger.Entries.Select(e => e.TimeUtc).Distinct().ToList(), ct);
+        foreach (var entry in ledger.Entries)
+        {
+            if (prices.TryGetValue(entry.TimeUtc, out var price) && price is not null)
+            {
+                entry.PriceUsd = price.PriceUsd;
+                entry.PriceInterval = price.Interval;
+            }
+        }
+
+        return ledger;
+    }
+
+    static string CsvField(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        return value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0 ? "\"" + value.Replace("\"", "\"\"") + "\"" : value;
+    }
+
+    static string ClassifyCounterparty(string counterparty, bool incoming)
+    {
+        if (counterparty.Equals(DistributionSourceAddress, StringComparison.OrdinalIgnoreCase))
+            return incoming ? "distribution" : "wallet";
+        if (ModuleAccounts.TryGetValue(counterparty, out var module))
+        {
+            if (incoming && module == "distribution") return "reward";
+            if (!incoming && module == "fee_collector") return "fee";
+            return "module";
+        }
+        return "wallet";
     }
 
     static async Task<DateTime?> TryGetBlockHeaderTimeAsync(HttpClient rpcHttp, long height)
@@ -1117,6 +1290,59 @@ public static class WebDashboard
         }
 
         return entries;
+    }
+
+    /// <summary>
+    /// All transfers in a tx_search result. Older MultiSend txs emitted transfer events with no
+    /// sender attribute; MultiSend has a single input, so those are attributed to the message sender.
+    /// </summary>
+    static List<(string Sender, string Recipient, BigInteger AmountUnits)> GetTxTransfers(JsonElement tx, string denomWantedUpper)
+    {
+        var transfers = new List<(string Sender, string Recipient, BigInteger AmountUnits)>();
+        if (!tx.TryGetProperty("tx_result", out var txResult) ||
+            !txResult.TryGetProperty("events", out var events) ||
+            events.ValueKind != JsonValueKind.Array)
+            return transfers;
+
+        string? multiSendSender = null;
+        var transferEvents = new List<List<(string Key, string Value)>>();
+        foreach (var ev in events.EnumerateArray())
+        {
+            var type = ev.TryGetProperty("type", out var typeEl) ? typeEl.GetString() ?? "" : "";
+            if (string.Equals(type, "transfer", StringComparison.Ordinal))
+            {
+                transferEvents.Add(ReadCometEventAttributes(ev));
+            }
+            else if (string.Equals(type, "message", StringComparison.Ordinal))
+            {
+                var attrs = ReadCometEventAttributes(ev);
+                if (attrs.Any(a => a.Key == "action" && a.Value == "/cosmos.bank.v1beta1.MsgMultiSend"))
+                    multiSendSender ??= attrs.FirstOrDefault(a => a.Key == "sender").Value;
+            }
+        }
+
+        foreach (var attrs in transferEvents)
+        {
+            if (attrs.Any(a => a.Key == "sender"))
+            {
+                transfers.AddRange(ParseTransferEventTuples(attrs, denomWantedUpper));
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(multiSendSender))
+                continue;
+
+            var recipients = attrs.Where(a => a.Key == "recipient").Select(a => a.Value).ToList();
+            var amounts = attrs.Where(a => a.Key == "amount").Select(a => a.Value).ToList();
+            for (var i = 0; i < Math.Min(recipients.Count, amounts.Count); i++)
+            {
+                var amount = ParseAmountFieldUopt(amounts[i], denomWantedUpper);
+                if (amount > BigInteger.Zero)
+                    transfers.Add((multiSendSender, recipients[i], amount));
+            }
+        }
+
+        return transfers;
     }
 
     static List<(string Sender, string Recipient, BigInteger AmountUnits)> ParseTransferEventTuples(
@@ -1624,6 +1850,8 @@ public static class WebDashboard
             "top100" => "Top 100 Wallets",
             "distributions" => "Distributions & Ledger",
             "address-distributions" => "Address Distributions",
+            "pnl" => "Profit & Loss",
+            "my-wallets" => "My Wallets",
             "locks" => "Locks & Staking",
             "counterparties" => "Counterparties",
             "network" => "Network Analysis",
@@ -2352,7 +2580,17 @@ public static class WebDashboard
             box-shadow: 0 1px 0 var(--border), 0 2px 8px rgba(0, 0, 0, 0.06);
         }
 
-        .top100-table-wrap .data-table th {
+        .memo-cell {
+            max-width: 260px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text-secondary);
+        }
+
+        .top100-table-wrap .data-table th,
+        #addr-dist-table-wrap .data-table th,
+        .pnl-table-wrap .data-table th {
             top: 0;
             z-index: 30;
         }
@@ -2620,9 +2858,128 @@ public static class WebDashboard
                 max-width: 100%;
             }
         }
+
+        /* Busy state for buttons that wait on the server, plus an indeterminate progress bar. */
+        button.is-busy {
+            cursor: progress;
+            opacity: 0.85;
+        }
+
+        button.is-busy::before {
+            content: '';
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-right: 8px;
+            vertical-align: -2px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: optic-spin 0.7s linear infinite;
+        }
+
+        .optic-progress {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 6px 0 10px;
+        }
+
+        .optic-progress-track {
+            position: relative;
+            flex: 1;
+            max-width: 420px;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--border);
+            overflow: hidden;
+        }
+
+        .optic-progress-fill {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 35%;
+            border-radius: 2px;
+            background: var(--accent-primary);
+            animation: optic-indeterminate 1.4s ease-in-out infinite;
+        }
+
+        .optic-progress-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        @keyframes optic-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes optic-indeterminate {
+            0% { left: -35%; }
+            100% { left: 100%; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            button.is-busy::before { animation-duration: 2s; }
+            .optic-progress-fill { animation-duration: 4s; }
+        }
     </style>
 </head>
 <body>
+    <script>
+        // Marks a button busy and shows a progress bar with elapsed time after the anchor element.
+        // Returns a function that clears it.
+        window.opticBusy = function (button, anchor, message) {
+            const label = message || 'Working';
+            if (button) {
+                button.disabled = true;
+                button.classList.add('is-busy');
+                button.setAttribute('aria-busy', 'true');
+            }
+            const bar = document.createElement('div');
+            bar.className = 'optic-progress';
+            bar.setAttribute('role', 'progressbar');
+            bar.setAttribute('aria-label', label);
+            bar.innerHTML = '<div class=""optic-progress-track""><div class=""optic-progress-fill""></div></div><span class=""optic-progress-text"" aria-live=""off""></span>';
+            if (anchor) anchor.insertAdjacentElement('afterend', bar);
+            const text = bar.querySelector('.optic-progress-text');
+            const started = Date.now();
+            const tick = () => { text.textContent = label + '... ' + Math.floor((Date.now() - started) / 1000) + 's'; };
+            tick();
+            const timer = setInterval(tick, 1000);
+            return function () {
+                clearInterval(timer);
+                bar.remove();
+                if (button) {
+                    button.disabled = false;
+                    button.classList.remove('is-busy');
+                    button.removeAttribute('aria-busy');
+                }
+            };
+        };
+
+        // Report forms post to /run and wait for the CLI; show progress until the result page loads.
+        document.addEventListener('submit', function (e) {
+            const form = e.target;
+            if (!form.matches('form[action=""/run""]')) return;
+            const button = form.querySelector('button[type=""submit""], button:not([type])');
+            // Defer so the submit button's value still goes with the form.
+            setTimeout(function () { window.opticBusy(button, form, 'Running report'); }, 0);
+        });
+
+        // Coming back via the browser's back button can restore the busy state; clear it.
+        window.addEventListener('pageshow', function (e) {
+            if (!e.persisted) return;
+            document.querySelectorAll('.optic-progress').forEach(function (el) { el.remove(); });
+            document.querySelectorAll('button.is-busy').forEach(function (b) {
+                b.disabled = false;
+                b.classList.remove('is-busy');
+                b.removeAttribute('aria-busy');
+            });
+        });
+    </script>
     <div class=""app-container"">
         <nav class=""top-nav"">
             <div class=""top-nav-inner"">
@@ -2641,6 +2998,8 @@ public static class WebDashboard
                         <div class=""menu-dropdown"">
                             <a href=""/page/distributions"" class=""menu-item" + (page == "distributions" ? @""" active" : @"""") + @""">Distributions</a>
                             <a href=""/page/address-distributions"" class=""menu-item" + (page == "address-distributions" ? @""" active" : @"""") + @""">Address Distributions</a>
+                            <a href=""/page/pnl"" class=""menu-item" + (page == "pnl" ? @""" active" : @"""") + @""">Profit &amp; Loss</a>
+                            <a href=""/page/my-wallets"" class=""menu-item" + (page == "my-wallets" ? @""" active" : @"""") + @""">My Wallets</a>
                             <a href=""/page/locks"" class=""menu-item" + (page == "locks" ? @""" active" : @"""") + @""">Locks & Staking</a>
                             <a href=""/page/counterparties"" class=""menu-item" + (page == "counterparties" ? @""" active" : @"""") + @""">Counterparties</a>
                             <a href=""/page/network"" class=""menu-item" + (page == "network" ? @""" active" : @"""") + @""">Network</a>
@@ -2820,8 +3179,8 @@ public static class WebDashboard
                 <h2 class=""section-title"">Wallet Overview</h2>
                 <div class=""report-cards"">
 ");
-        AppendWalletGrowthCard(sb);
         AppendPriceChartCard(sb);
+        AppendWalletGrowthCard(sb);
         AppendDailyStatsCard(sb);
         sb.Append(@"
                 </div>
@@ -2845,6 +3204,12 @@ public static class WebDashboard
                 break;
             case "address-distributions":
                 AppendAddressDistributionsCard(sb);
+                break;
+            case "pnl":
+                AppendProfitLossCard(sb);
+                break;
+            case "my-wallets":
+                AppendMyWalletsCard(sb);
                 break;
             case "locks":
                 AppendLocksCard(sb);
@@ -3337,8 +3702,279 @@ public static class WebDashboard
 ");
     }
 
+    // The user's own wallets, kept in the optic_wallets browser cookie (nothing is stored server-side).
+    // Shared by the Address Distributions, Profit & Loss and My Wallets pages.
+    static void AppendMyWalletsScript(System.Text.StringBuilder sb)
+    {
+        sb.Append(@"
+                    <script>
+                        window.opticWallets = window.opticWallets || (function () {
+                            const NAME = 'optic_wallets';
+                            const valid = (a) => /^optio1[02-9ac-hj-np-z]{38,58}$/.test(String(a || ''));
+                            const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
+                            const short = (a) => a.length > 20 ? a.slice(0, 12) + '...' + a.slice(-6) : a;
+
+                            // Stored as [{ a: address, l: label, p: isPrimary }].
+                            const list = () => {
+                                try {
+                                    const raw = document.cookie.split('; ').find(c => c.startsWith(NAME + '='));
+                                    const parsed = raw ? JSON.parse(decodeURIComponent(raw.slice(NAME.length + 1))) : [];
+                                    return Array.isArray(parsed) ? parsed.filter(w => w && valid(w.a)) : [];
+                                } catch (e) { return []; }
+                            };
+                            const save = (wallets) => {
+                                const seen = new Set();
+                                const clean = [];
+                                for (const w of wallets) {
+                                    const a = String(w.a || '').trim().toLowerCase();
+                                    if (!valid(a) || seen.has(a)) continue;
+                                    seen.add(a);
+                                    clean.push({ a, l: String(w.l || '').trim().slice(0, 40), p: !!w.p });
+                                }
+                                // Exactly one primary when there are any wallets.
+                                const primaryIndex = clean.findIndex(w => w.p);
+                                clean.forEach((w, i) => w.p = i === (primaryIndex < 0 ? 0 : primaryIndex));
+                                document.cookie = NAME + '=' + encodeURIComponent(JSON.stringify(clean)) + '; path=/; max-age=315360000; SameSite=Strict';
+                                return clean;
+                            };
+                            const find = (a) => list().find(w => w.a === String(a || '').toLowerCase()) || null;
+
+                            // Exchange deposit addresses, stored as [{ a: address, n: name, m: the user's deposit memo }].
+                            // Until the user saves the list, it starts with Coinstore.
+                            const EX_NAME = 'optic_exchanges';
+                            const EX_DEFAULT = [{ a: 'optio12e3lctqkpg2rrkvywd6596at358dr50cpmcr5x', n: 'Coinstore', m: '' }];
+                            const exchanges = () => {
+                                try {
+                                    const raw = document.cookie.split('; ').find(c => c.startsWith(EX_NAME + '='));
+                                    if (!raw) return EX_DEFAULT.map(x => ({ ...x }));
+                                    const parsed = JSON.parse(decodeURIComponent(raw.slice(EX_NAME.length + 1)));
+                                    return Array.isArray(parsed) ? parsed.filter(x => x && valid(x.a)) : [];
+                                } catch (e) { return []; }
+                            };
+                            const saveExchanges = (items) => {
+                                const seen = new Set();
+                                const clean = [];
+                                for (const x of items) {
+                                    const a = String(x.a || '').trim().toLowerCase();
+                                    if (!valid(a) || seen.has(a)) continue;
+                                    seen.add(a);
+                                    clean.push({ a, n: String(x.n || '').trim().slice(0, 30) || 'Exchange', m: String(x.m || '').trim().slice(0, 64) });
+                                }
+                                document.cookie = EX_NAME + '=' + encodeURIComponent(JSON.stringify(clean)) + '; path=/; max-age=315360000; SameSite=Strict';
+                                return clean;
+                            };
+                            const label = (a) => { const w = find(a); return w ? (w.l || (w.p ? 'Primary' : 'My wallet')) : null; };
+
+                            return {
+                                valid,
+                                list,
+                                save,
+                                find,
+                                label,
+                                isMine: (a) => !!find(a),
+                                exchanges,
+                                saveExchanges,
+                                exchange: (a) => exchanges().find(x => x.a === String(a || '').toLowerCase()) || null,
+                                primary: () => (list().find(w => w.p) || {}).a || null,
+                                add: (a, l) => save([...list(), { a, l: l || '', p: false }]),
+                                remove: (a) => save(list().filter(w => w.a !== String(a || '').toLowerCase())),
+
+                                // Row of one-click buttons for the user's wallets; onPick(address) switches to one.
+                                renderSwitcher: (el, current, onPick) => {
+                                    const wallets = list();
+                                    if (wallets.length === 0) {
+                                        el.innerHTML = 'Save your own wallets on <a href=""/page/my-wallets"">My Wallets</a> to switch between them here and to spot transfers between them.';
+                                        return;
+                                    }
+                                    el.innerHTML = '<span>My wallets:</span> ' + wallets.map(w => {
+                                        const active = w.a === current;
+                                        return `<button type=""button"" data-wallet=""${esc(w.a)}"" title=""${esc(w.a)}"" aria-pressed=""${active}"" style=""padding: 3px 10px; font-size: 11px; border-radius: 999px; margin: 2px 0; border: 1px solid ${active ? 'var(--accent-primary)' : 'var(--border)'}; background: ${active ? 'var(--accent-primary)' : 'var(--surface)'}; color: ${active ? 'var(--bg-primary)' : 'var(--text-secondary)'}; cursor: pointer; text-transform: none; letter-spacing: 0;"">${esc(w.l || short(w.a))}${w.p ? ' (primary)' : ''}</button>`;
+                                    }).join(' ') + ' <a href=""/page/my-wallets"" style=""font-size: 12px;"">Manage</a>';
+                                    el.querySelectorAll('button[data-wallet]').forEach(b => b.addEventListener('click', () => onPick(b.dataset.wallet)));
+                                }
+                            };
+                        })();
+                    </script>
+");
+    }
+
+    static void AppendMyWalletsCard(System.Text.StringBuilder sb)
+    {
+        AppendMyWalletsScript(sb);
+        sb.Append(@"
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>My Wallets</h2>
+                        <div class=""card-content"">
+                            <div style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;"">Wallets you own. The primary wallet is the one node distributions are paid to; it opens by default on Address Distributions and Profit &amp; Loss. Transfers between these wallets are labelled and left out of profit and loss. Saved only in this browser, in a cookie; nothing is stored on the server.</div>
+                            <form id=""mw-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px;"">
+                                <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
+                                    <label for=""mw-address"">Wallet address</label>
+                                    <input type=""text"" id=""mw-address"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
+                                </div>
+                                <div class=""form-group"" style=""flex: 0 1 220px; margin-bottom: 0;"">
+                                    <label for=""mw-label"">Label (optional)</label>
+                                    <input type=""text"" id=""mw-label"" placeholder=""e.g. Exchange, Cold storage"" maxlength=""40"" autocomplete=""off"">
+                                </div>
+                                <button type=""submit"">Add Wallet</button>
+                            </form>
+                            <div id=""mw-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;""></div>
+                            <div class=""data-table-wrap pnl-table-wrap"">
+                                <table class=""data-table"">
+                                    <thead>
+                                        <tr>
+                                            <th>Primary</th>
+                                            <th>Address</th>
+                                            <th>Label</th>
+                                            <th>Reports</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id=""mw-body""></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>Exchanges</h2>
+                        <div class=""card-content"">
+                            <div style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;"">Exchange deposit addresses you sent OPT to or withdrew OPT from. On Profit &amp; Loss, sends to an exchange are labelled as sales there and receipts from it as purchases. If the exchange needed a memo to credit your account (Coinstore does), enter it so sends to your own account can be told apart from sends to someone else's. Saved only in this browser, in a cookie.</div>
+                            <form id=""ex-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px;"">
+                                <div class=""form-group"" style=""flex: 0 1 180px; margin-bottom: 0;"">
+                                    <label for=""ex-name"">Exchange</label>
+                                    <input type=""text"" id=""ex-name"" placeholder=""e.g. MEXC"" maxlength=""30"" autocomplete=""off"" required>
+                                </div>
+                                <div class=""form-group"" style=""flex: 1 1 380px; margin-bottom: 0;"">
+                                    <label for=""ex-address"">Deposit / withdrawal address</label>
+                                    <input type=""text"" id=""ex-address"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
+                                </div>
+                                <div class=""form-group"" style=""flex: 0 1 200px; margin-bottom: 0;"">
+                                    <label for=""ex-memo"">My deposit memo (optional)</label>
+                                    <input type=""text"" id=""ex-memo"" maxlength=""64"" autocomplete=""off"" spellcheck=""false"">
+                                </div>
+                                <button type=""submit"">Add Exchange</button>
+                            </form>
+                            <div id=""ex-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;""></div>
+                            <div class=""data-table-wrap pnl-table-wrap"">
+                                <table class=""data-table"">
+                                    <thead>
+                                        <tr>
+                                            <th>Exchange</th>
+                                            <th>Address</th>
+                                            <th>My deposit memo</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id=""ex-body""></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <script>
+                        (function () {
+                            const W = window.opticWallets;
+                            const exBody = document.getElementById('ex-body');
+                            const exStatus = document.getElementById('ex-status');
+                            const escEx = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
+                            const renderExchanges = () => {
+                                const items = W.exchanges();
+                                exBody.innerHTML = items.length === 0
+                                    ? '<tr><td colspan=""4"" style=""text-align: center; color: var(--text-secondary);"">No exchanges saved.</td></tr>'
+                                    : items.map(x => `<tr>
+                                        <td><input type=""text"" data-ex-name=""${escEx(x.a)}"" value=""${escEx(x.n)}"" maxlength=""30"" style=""width: 100%; min-width: 120px;""></td>
+                                        <td class=""address-cell"">${escEx(x.a)}</td>
+                                        <td><input type=""text"" data-ex-memo=""${escEx(x.a)}"" value=""${escEx(x.m)}"" maxlength=""64"" placeholder=""none"" style=""width: 100%; min-width: 140px;""></td>
+                                        <td><button type=""button"" data-ex-remove=""${escEx(x.a)}"" style=""padding: 4px 10px; font-size: 11px;"">Remove</button></td>
+                                    </tr>`).join('');
+                            };
+                            document.getElementById('ex-form').addEventListener('submit', (e) => {
+                                e.preventDefault();
+                                const address = document.getElementById('ex-address').value.trim().toLowerCase();
+                                if (!W.valid(address)) { exStatus.textContent = 'That is not a valid optio1... address.'; return; }
+                                if (W.exchange(address)) { exStatus.textContent = 'That address is already saved.'; return; }
+                                W.saveExchanges([...W.exchanges(), { a: address, n: document.getElementById('ex-name').value, m: document.getElementById('ex-memo').value }]);
+                                ['ex-name', 'ex-address', 'ex-memo'].forEach(id => document.getElementById(id).value = '');
+                                exStatus.textContent = 'Saved.';
+                                renderExchanges();
+                            });
+                            exBody.addEventListener('change', (e) => {
+                                const a = e.target.dataset.exName || e.target.dataset.exMemo;
+                                if (!a) return;
+                                const field = e.target.dataset.exName ? 'n' : 'm';
+                                W.saveExchanges(W.exchanges().map(x => x.a === a ? { ...x, [field]: e.target.value } : x));
+                                exStatus.textContent = 'Saved.';
+                            });
+                            exBody.addEventListener('click', (e) => {
+                                const btn = e.target.closest('button[data-ex-remove]');
+                                if (!btn) return;
+                                W.saveExchanges(W.exchanges().filter(x => x.a !== btn.dataset.exRemove));
+                                exStatus.textContent = 'Removed.';
+                                renderExchanges();
+                            });
+                            renderExchanges();
+                        })();
+                    </script>
+                    <script>
+                        (function () {
+                            const W = window.opticWallets;
+                            const body = document.getElementById('mw-body');
+                            const status = document.getElementById('mw-status');
+                            const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
+
+                            const render = () => {
+                                const wallets = W.list();
+                                body.innerHTML = wallets.length === 0
+                                    ? '<tr><td colspan=""5"" style=""text-align: center; color: var(--text-secondary);"">No wallets saved yet. Add your distribution wallet first; it becomes the primary.</td></tr>'
+                                    : wallets.map(w => `<tr>
+                                        <td><input type=""radio"" name=""mw-primary"" value=""${esc(w.a)}"" ${w.p ? 'checked' : ''} aria-label=""Make ${esc(w.a)} the primary wallet""></td>
+                                        <td class=""address-cell"">${esc(w.a)}</td>
+                                        <td><input type=""text"" data-label=""${esc(w.a)}"" value=""${esc(w.l)}"" maxlength=""40"" placeholder=""${w.p ? 'Primary' : 'My wallet'}"" style=""width: 100%; min-width: 140px;""></td>
+                                        <td style=""white-space: nowrap;""><a href=""/page/address-distributions?address=${encodeURIComponent(w.a)}"">Distributions</a> · <a href=""/page/pnl?address=${encodeURIComponent(w.a)}"">Profit &amp; Loss</a></td>
+                                        <td><button type=""button"" data-remove=""${esc(w.a)}"" style=""padding: 4px 10px; font-size: 11px;"">Remove</button></td>
+                                    </tr>`).join('');
+                            };
+
+                            document.getElementById('mw-form').addEventListener('submit', (e) => {
+                                e.preventDefault();
+                                const addressEl = document.getElementById('mw-address');
+                                const labelEl = document.getElementById('mw-label');
+                                const address = addressEl.value.trim().toLowerCase();
+                                if (!W.valid(address)) { status.textContent = 'That is not a valid optio1... address.'; return; }
+                                if (W.isMine(address)) { status.textContent = 'That wallet is already saved.'; return; }
+                                W.add(address, labelEl.value);
+                                addressEl.value = '';
+                                labelEl.value = '';
+                                status.textContent = 'Saved.';
+                                render();
+                            });
+
+                            body.addEventListener('change', (e) => {
+                                if (e.target.name === 'mw-primary') {
+                                    W.save(W.list().map(w => ({ ...w, p: w.a === e.target.value })));
+                                    status.textContent = 'Primary wallet updated.';
+                                    render();
+                                } else if (e.target.dataset.label) {
+                                    W.save(W.list().map(w => w.a === e.target.dataset.label ? { ...w, l: e.target.value } : w));
+                                    status.textContent = 'Label saved.';
+                                }
+                            });
+
+                            body.addEventListener('click', (e) => {
+                                const btn = e.target.closest('button[data-remove]');
+                                if (!btn) return;
+                                W.remove(btn.dataset.remove);
+                                status.textContent = 'Removed.';
+                                render();
+                            });
+
+                            render();
+                        })();
+                    </script>
+");
+    }
+
     static void AppendAddressDistributionsCard(System.Text.StringBuilder sb)
     {
+        AppendMyWalletsScript(sb);
         sb.Append(@"
                     <div class=""card"" style=""grid-column: 1 / -1;"">
                         <h2>Distributions to an Address</h2>
@@ -3348,11 +3984,38 @@ public static class WebDashboard
                                     <label for=""addr-dist-input"">Wallet address</label>
                                     <input type=""text"" id=""addr-dist-input"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
                                 </div>
+                                <div class=""form-group"" style=""flex: 0 0 140px; margin-bottom: 0;"">
+                                    <label for=""addr-dist-year"">Year</label>
+                                    <select id=""addr-dist-year""></select>
+                                </div>
                                 <button type=""submit"" id=""addr-dist-submit"">Get Distributions</button>
                                 <a id=""addr-dist-csv"" class=""header-link"" href=""#"" hidden>Download CSV</a>
                             </form>
+                            <div id=""addr-dist-wallets"" style=""font-size: 13px; color: var(--text-secondary); margin: -4px 0 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;""></div>
                             <div id=""addr-dist-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;"">Lists every payout from the node distribution account (optio103r5...) to the wallet, priced at the OPT/USD rate for the hour it was paid.</div>
                             <div id=""addr-dist-summary"" style=""display: none; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 12px;""></div>
+                            <div id=""addr-dist-view"" role=""group"" aria-label=""View"" style=""display: none; gap: 6px; margin-bottom: 8px;"">
+                                <button type=""button"" data-view=""list"">PAYOUTS</button>
+                                <button type=""button"" data-view=""price"">BY PRICE</button>
+                            </div>
+                            <div class=""data-table-wrap pnl-table-wrap"" id=""addr-dist-bands-wrap"" hidden>
+                                <table class=""data-table"">
+                                    <thead>
+                                        <tr>
+                                            <th>Price range (USD)</th>
+                                            <th style=""text-align: right;"">Payouts</th>
+                                            <th style=""text-align: right;"">OPT</th>
+                                            <th style=""width: 180px;"">Share of OPT</th>
+                                            <th style=""text-align: right;"">Value (USD)</th>
+                                            <th style=""text-align: right;"">Avg price</th>
+                                            <th>First received</th>
+                                            <th>Last received</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id=""addr-dist-bands-body""></tbody>
+                                    <tfoot id=""addr-dist-bands-foot""></tfoot>
+                                </table>
+                            </div>
                             <div class=""data-table-wrap"" id=""addr-dist-table-wrap"" hidden>
                                 <table class=""data-table"">
                                     <thead>
@@ -3362,6 +4025,7 @@ public static class WebDashboard
                                             <th style=""text-align: right;"">Amount (OPT)</th>
                                             <th style=""text-align: right;"">Price (USD)</th>
                                             <th style=""text-align: right;"">Value (USD)</th>
+                                            <th>Memo</th>
                                             <th>Tx</th>
                                         </tr>
                                     </thead>
@@ -3384,36 +4048,159 @@ public static class WebDashboard
                             const fmtUsd = (v) => v == null ? '-' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                             const fmtPrice = (v) => v == null ? '-' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
                             const fmtTime = (v) => String(v || '').replace('T', ' ').replace(/\.\d+/, '').replace('Z', '');
+                            const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
                             const tile = (label, value) => `<div class=""metric-card""><div style=""color: var(--text-secondary); font-size: 12px;"">${label}</div><div style=""font-size: 18px; font-weight: 600; margin-top: 4px;"">${value}</div></div>`;
 
-                            const run = async (address) => {
-                                submit.disabled = true;
-                                csvLink.hidden = true;
-                                summary.style.display = 'none';
-                                tableWrap.hidden = true;
-                                status.textContent = 'Searching the node for distributions to this address. Wallets with a long history can take a minute...';
-                                try {
-                                    const qs = 'address=' + encodeURIComponent(address);
-                                    const response = await fetch('/api/distributions/address?' + qs);
-                                    const data = await response.json();
-                                    if (!response.ok) throw new Error(data.error || 'Request failed');
-                                    history.replaceState(null, '', '?' + qs);
+                            const yearSelect = document.getElementById('addr-dist-year');
+                            const firstYear = 2024;
+                            const currentYear = new Date().getUTCFullYear();
+                            yearSelect.innerHTML = '<option value="""">All years</option>' +
+                                Array.from({ length: currentYear - firstYear + 1 }, (_, i) => currentYear - i)
+                                    .map(y => `<option value=""${y}"">${y}</option>`).join('');
 
-                                    const rows = data.rows || [];
-                                    if (rows.length === 0) {
-                                        status.textContent = 'No distributions from optio103r5... found for this address.';
-                                        return;
+                            let loaded = null; // { address, data } from the last successful lookup
+                            let viewMode = new URLSearchParams(location.search).get('view') === 'price' ? 'price' : 'list';
+                            const viewEl = document.getElementById('addr-dist-view');
+                            const bandsWrap = document.getElementById('addr-dist-bands-wrap');
+                            const renderViewButtons = () => {
+                                viewEl.querySelectorAll('button').forEach(btn => {
+                                    const active = btn.dataset.view === viewMode;
+                                    btn.setAttribute('aria-pressed', String(active));
+                                    btn.style.cssText = `padding: 4px 10px; font-size: 11px; border-radius: 999px; border: 1px solid ${active ? 'var(--accent-primary)' : 'var(--border)'}; background: ${active ? 'var(--accent-primary)' : 'var(--surface)'}; color: ${active ? 'var(--bg-primary)' : 'var(--text-secondary)'}; cursor: pointer;`;
+                                });
+                            };
+
+                            // Price band edges on a log scale: 1-2-5 per decade, or 1-1.5-2-3-5-7 when that
+                            // would give fewer than 5 bands. Returns ascending edges spanning [min, max].
+                            const bandEdges = (min, max) => {
+                                const build = (mults) => {
+                                    const all = [];
+                                    for (let e = Math.floor(Math.log10(min)) - 1; e <= Math.ceil(Math.log10(max)) + 1; e++)
+                                        for (const m of mults) all.push(Number((m * Math.pow(10, e)).toPrecision(6)));
+                                    const lo = all.filter(x => x <= min).pop();
+                                    const hi = all.find(x => x > max);
+                                    return all.filter(x => x >= lo && x <= hi);
+                                };
+                                const coarse = build([1, 2, 5]);
+                                return coarse.length - 1 >= 5 ? coarse : build([1, 1.5, 2, 3, 5, 7]);
+                            };
+                            const fmtEdge = (v) => '$' + v.toLocaleString('en-US', { maximumSignificantDigits: 3, minimumFractionDigits: 2 });
+
+                            const computeBands = (rows) => {
+                                const priced = rows.filter(r => r.priceUsd != null && r.priceUsd > 0);
+                                const bands = [];
+                                if (priced.length > 0) {
+                                    const prices = priced.map(r => r.priceUsd);
+                                    const edges = bandEdges(Math.min(...prices), Math.max(...prices));
+                                    for (let i = 0; i < edges.length - 1; i++)
+                                        bands.push({ lo: edges[i], hi: edges[i + 1], rows: [] });
+                                    for (const r of priced) {
+                                        let i = bands.findIndex(b => r.priceUsd >= b.lo && r.priceUsd < b.hi);
+                                        if (i < 0) i = bands.length - 1;
+                                        bands[i].rows.push(r);
                                     }
+                                }
+                                const result = bands.filter(b => b.rows.length > 0).reverse().map(b => ({ label: `${fmtEdge(b.lo)} - ${fmtEdge(b.hi)}`, rows: b.rows }));
+                                const unpriced = rows.filter(r => r.priceUsd == null || r.priceUsd <= 0);
+                                if (unpriced.length > 0) result.push({ label: 'No market price', rows: unpriced, unpriced: true });
+                                for (const b of result) {
+                                    b.count = b.rows.length;
+                                    b.opt = b.rows.reduce((s, r) => s + r.amountOpt, 0);
+                                    b.value = b.unpriced ? null : b.rows.reduce((s, r) => s + (r.valueUsd || 0), 0);
+                                    b.avg = b.unpriced || b.opt === 0 ? null : b.value / b.opt;
+                                    b.first = b.rows[0].timeUtc;
+                                    b.last = b.rows[b.rows.length - 1].timeUtc;
+                                }
+                                return result;
+                            };
 
-                                    const pricedOpt = rows.filter(r => r.priceUsd != null).reduce((s, r) => s + r.amountOpt, 0);
-                                    summary.innerHTML =
-                                        tile('Distributions', rows.length.toLocaleString('en-US')) +
-                                        tile('Total OPT', fmtOpt(data.totalOpt)) +
-                                        tile('Total value (USD)', fmtUsd(data.totalValueUsd)) +
-                                        tile('Avg price (USD)', pricedOpt > 0 ? fmtPrice(data.totalValueUsd / pricedOpt) : '-') +
-                                        tile('First / last', fmtTime(rows[0].timeUtc).slice(0, 10) + ' to ' + fmtTime(rows[rows.length - 1].timeUtc).slice(0, 10));
-                                    summary.style.display = 'grid';
+                            const renderBands = (rows, totalOpt, totalValueUsd) => {
+                                const bands = computeBands(rows);
+                                document.getElementById('addr-dist-bands-body').innerHTML = bands.map(b => {
+                                    const share = totalOpt > 0 ? b.opt / totalOpt * 100 : 0;
+                                    return `<tr style=""${b.unpriced ? 'color: var(--text-muted);' : ''}"">
+                                        <td style=""white-space: nowrap;"">${b.label}</td>
+                                        <td class=""amount-cell"">${b.count.toLocaleString('en-US')}</td>
+                                        <td class=""amount-cell"">${fmtOpt(b.opt)}</td>
+                                        <td><div style=""display: flex; align-items: center; gap: 8px;"">
+                                            <div style=""flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;""><div style=""width: ${share.toFixed(2)}%; height: 100%; background: ${b.unpriced ? 'var(--text-muted)' : 'var(--accent-primary)'}; border-radius: 4px;""></div></div>
+                                            <span style=""font-size: 12px; min-width: 44px; text-align: right;"">${share.toFixed(1)}%</span>
+                                        </div></td>
+                                        <td class=""amount-cell"">${fmtUsd(b.value)}</td>
+                                        <td class=""amount-cell"">${fmtPrice(b.avg)}</td>
+                                        <td>${fmtTime(b.first).slice(0, 10)}</td>
+                                        <td>${fmtTime(b.last).slice(0, 10)}</td>
+                                    </tr>`;
+                                }).join('');
+                                document.getElementById('addr-dist-bands-foot').innerHTML = `<tr style=""font-weight: 600; border-top: 2px solid var(--border-strong);"">
+                                    <td>Total</td>
+                                    <td class=""amount-cell"">${rows.length.toLocaleString('en-US')}</td>
+                                    <td class=""amount-cell"">${fmtOpt(totalOpt)}</td>
+                                    <td></td>
+                                    <td class=""amount-cell"">${fmtUsd(totalValueUsd)}</td>
+                                    <td></td><td></td><td></td>
+                                </tr>`;
+                                return bands;
+                            };
+                            let currentBands = [];
 
+                            const updateUrl = () => {
+                                const params = new URLSearchParams();
+                                if (loaded) params.set('address', loaded.address);
+                                if (yearSelect.value) params.set('year', yearSelect.value);
+                                if (viewMode === 'price') params.set('view', 'price');
+                                const qs = params.toString();
+                                history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+                                return qs;
+                            };
+
+                            // Draws the summary, table and notes for the selected year from the loaded rows.
+                            const renderView = () => {
+                                const data = loaded.data;
+                                const year = yearSelect.value;
+                                const qs = updateUrl();
+                                const rows = (data.rows || []).filter(r => !year || String(r.timeUtc).startsWith(year));
+                                csvLink.href = '/api/distributions/address?' + qs + '&format=csv';
+
+                                if (rows.length === 0) {
+                                    summary.style.display = 'none';
+                                    tableWrap.hidden = true;
+                                    bandsWrap.hidden = true;
+                                    viewEl.style.display = 'none';
+                                    csvLink.hidden = true;
+                                    status.textContent = (data.rows || []).length === 0
+                                        ? 'No distributions from optio103r5... found for this address.'
+                                        : `No distributions to this address in ${year}.`;
+                                    return;
+                                }
+
+                                const totalOpt = rows.reduce((s, r) => s + r.amountOpt, 0);
+                                const totalValueUsd = rows.reduce((s, r) => s + (r.valueUsd || 0), 0);
+                                const unpricedCount = rows.filter(r => r.priceUsd == null).length;
+                                const priced = rows.filter(r => r.priceUsd != null);
+                                const pricedOpt = priced.reduce((s, r) => s + r.amountOpt, 0);
+                                const high = priced.reduce((best, r) => !best || r.priceUsd > best.priceUsd ? r : best, null);
+                                const low = priced.reduce((best, r) => !best || r.priceUsd < best.priceUsd ? r : best, null);
+                                const priceTile = (label, r) => tile(label, r
+                                    ? `${fmtPrice(r.priceUsd)}<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;"">${fmtTime(r.timeUtc).slice(0, 16)} UTC</div>`
+                                    : '-');
+                                summary.innerHTML =
+                                    tile('Distributions', rows.length.toLocaleString('en-US')) +
+                                    tile('Total OPT', fmtOpt(totalOpt)) +
+                                    tile('Total value (USD)', fmtUsd(totalValueUsd)) +
+                                    tile('Avg price (USD)', pricedOpt > 0 ? fmtPrice(totalValueUsd / pricedOpt) : '-') +
+                                    priceTile('Highest price received', high) +
+                                    priceTile('Lowest price received', low) +
+                                    tile('First / last', fmtTime(rows[0].timeUtc).slice(0, 10) + ' to ' + fmtTime(rows[rows.length - 1].timeUtc).slice(0, 10));
+                                summary.style.display = 'grid';
+
+                                viewEl.style.display = 'flex';
+                                renderViewButtons();
+                                if (viewMode === 'price') {
+                                    currentBands = renderBands(rows, totalOpt, totalValueUsd);
+                                    tableWrap.hidden = true;
+                                    bandsWrap.hidden = false;
+                                } else {
                                     body.innerHTML = rows.slice().reverse().map(r => `
                                         <tr>
                                             <td>${fmtTime(r.timeUtc)}</td>
@@ -3421,23 +4208,41 @@ public static class WebDashboard
                                             <td class=""amount-cell"">${fmtOpt(r.amountOpt)}</td>
                                             <td class=""amount-cell"" title=""${r.priceInterval === '1d' ? 'Daily close (no hourly price for this time)' : r.priceInterval === '1h' ? 'Hourly close' : 'No market price available'}"">${fmtPrice(r.priceUsd)}${r.priceInterval === '1d' ? '*' : ''}</td>
                                             <td class=""amount-cell"">${fmtUsd(r.valueUsd)}</td>
+                                            <td class=""memo-cell"" title=""${esc(r.memo)}"">${esc(r.memo)}</td>
                                             <td class=""address-cell"" title=""${r.txHash}"">${String(r.txHash).slice(0, 10)}...</td>
                                         </tr>`).join('');
+                                    bandsWrap.hidden = true;
                                     tableWrap.hidden = false;
+                                }
 
-                                    const notes = [`Source: ${data.source}. Prices: ${data.priceSource}, hourly close for the hour of each payout; * = daily close.`];
-                                    if (data.unpricedCount > 0) {
-                                        const to = data.priceDataTo ? fmtTime(data.priceDataTo).slice(0, 10) : null;
-                                        notes.push(`${data.unpricedCount.toLocaleString('en-US')} payout(s) have no price` + (to ? ` (market data ends ${to})` : '') + ' and are left out of the USD total.');
-                                    }
-                                    if (data.truncated) notes.push('Results were capped at 20,000 transactions.');
-                                    status.textContent = notes.join(' ');
-                                    csvLink.href = '/api/distributions/address?' + qs + '&format=csv';
-                                    csvLink.hidden = false;
+                                const notes = [`Source: ${data.source}. Prices: ${data.priceSource}, hourly close for the hour of each payout; * = daily close.`];
+                                if (unpricedCount > 0) {
+                                    const to = data.priceDataTo ? fmtTime(data.priceDataTo).slice(0, 10) : null;
+                                    notes.push(`${unpricedCount.toLocaleString('en-US')} payout(s) have no price` + (to ? ` (market data ends ${to})` : '') + ' and are left out of the USD total.');
+                                }
+                                if (data.truncated) notes.push('Results were capped at 20,000 transactions.');
+                                status.textContent = notes.join(' ');
+                                csvLink.hidden = false;
+                            };
+
+                            const run = async (address) => {
+                                const done = window.opticBusy(submit, status, 'Searching the node');
+                                csvLink.hidden = true;
+                                summary.style.display = 'none';
+                                tableWrap.hidden = true;
+                                status.textContent = 'Searching the node for distributions to this address. Wallets with a long history can take a minute...';
+                                try {
+                                    const response = await fetch('/api/distributions/address?address=' + encodeURIComponent(address));
+                                    const data = await response.json();
+                                    if (!response.ok) throw new Error(data.error || 'Request failed');
+                                    loaded = { address: data.address, data };
+                                    renderView();
+                                    renderWallets();
                                 } catch (error) {
+                                    loaded = null;
                                     status.textContent = 'Error: ' + error.message;
                                 } finally {
-                                    submit.disabled = false;
+                                    done();
                                 }
                             };
 
@@ -3447,7 +4252,574 @@ public static class WebDashboard
                                 if (address) run(address);
                             });
 
-                            const initial = new URLSearchParams(location.search).get('address');
+                            viewEl.addEventListener('click', (e) => {
+                                const btn = e.target.closest('button[data-view]');
+                                if (!btn || !loaded) return;
+                                viewMode = btn.dataset.view;
+                                renderView();
+                            });
+
+                            // In the by-price view the CSV is the band table, built here; otherwise the server's payout CSV.
+                            csvLink.addEventListener('click', (e) => {
+                                if (viewMode !== 'price' || !loaded) return;
+                                e.preventDefault();
+                                const cell = (v) => v == null ? '' : String(v);
+                                const lines = [['price_range_usd', 'payouts', 'amount_opt', 'value_usd', 'avg_price_usd', 'first_received_utc', 'last_received_utc'].join(',')];
+                                for (const b of currentBands)
+                                    lines.push([b.label.replace(/\$/g, '').replace(' - ', ' to '), b.count, b.opt, b.value, b.avg, fmtTime(b.first), fmtTime(b.last)].map(cell).join(','));
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+                                a.download = `distributions-by-price-${loaded.address}${yearSelect.value ? '-' + yearSelect.value : ''}.csv`;
+                                a.click();
+                                setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                            });
+
+                            // Switching years re-filters the rows already loaded; no new node query.
+                            yearSelect.addEventListener('change', () => {
+                                if (loaded && loaded.address === input.value.trim()) renderView();
+                                else updateUrl();
+                            });
+
+                            const renderWallets = () => window.opticWallets.renderSwitcher(
+                                document.getElementById('addr-dist-wallets'),
+                                loaded ? loaded.address : null,
+                                (address) => { input.value = address; run(address); });
+                            renderWallets();
+
+                            const initialParams = new URLSearchParams(location.search);
+                            const initialYear = initialParams.get('year');
+                            if (initialYear && yearSelect.querySelector(`option[value=""${CSS.escape(initialYear)}""]`)) yearSelect.value = initialYear;
+                            // No address in the link: open the primary wallet.
+                            const initial = initialParams.get('address') || window.opticWallets.primary();
+                            if (initial) {
+                                input.value = initial;
+                                run(initial);
+                            }
+                        })();
+                    </script>
+");
+    }
+
+    static void AppendProfitLossCard(System.Text.StringBuilder sb)
+    {
+        AppendMyWalletsScript(sb);
+        sb.Append(@"
+                    <div class=""card"" style=""grid-column: 1 / -1;"">
+                        <h2>Wallet Profit &amp; Loss (FIFO)</h2>
+                        <div class=""card-content"">
+                            <form id=""pnl-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px;"">
+                                <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
+                                    <label for=""pnl-input"">Wallet address</label>
+                                    <input type=""text"" id=""pnl-input"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
+                                </div>
+                                <div class=""form-group"" style=""flex: 0 0 140px; margin-bottom: 0;"">
+                                    <label for=""pnl-year"">Year</label>
+                                    <select id=""pnl-year""></select>
+                                </div>
+                                <button type=""submit"" id=""pnl-submit"">Analyze</button>
+                                <label style=""font-size: 13px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; padding-bottom: 10px;"" title=""Off: node distributions are left out entirely and sales are matched only to tokens bought or received from other wallets. On: distributions count as tokens acquired at the market price when received."">
+                                    <input type=""checkbox"" id=""pnl-include-dist""> Count node distributions as acquired tokens
+                                </label>
+                            </form>
+                            <div id=""pnl-wallets"" style=""font-size: 13px; color: var(--text-secondary); margin: -4px 0 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;""></div>
+                            <div id=""pnl-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;"">Shows what the wallet received outside node distributions, what it sent out, and the profit or loss on each send, matching sends to the oldest tokens first (FIFO).</div>
+                            <div id=""pnl-summary"" style=""display: none; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin-bottom: 16px;""></div>
+
+                            <div id=""pnl-results"" hidden>
+                                <div style=""display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0;"">
+                                    <h3 style=""margin: 0; font-size: 15px;"">Sales matched to the oldest tokens (FIFO)</h3>
+                                    <div style=""display: flex; gap: 12px; align-items: center;"">
+                                        <label style=""font-size: 13px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer;""><input type=""checkbox"" id=""pnl-losses-only""> Losses only</label>
+                                        <a href=""#"" id=""pnl-sales-csv"" class=""header-link"">Download CSV</a>
+                                    </div>
+                                </div>
+                                <div class=""data-table-wrap pnl-table-wrap"">
+                                    <table class=""data-table"">
+                                        <thead>
+                                            <tr>
+                                                <th>Sold (UTC)</th>
+                                                <th>Sent to</th>
+                                                <th style=""text-align: right;"">OPT</th>
+                                                <th style=""text-align: right;"">Sale price</th>
+                                                <th style=""text-align: right;"">Proceeds</th>
+                                                <th style=""text-align: right;"">Cost basis</th>
+                                                <th style=""text-align: right;"">Gain / loss</th>
+                                                <th>Acquired</th>
+                                                <th>Term</th>
+                                                <th>Memo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id=""pnl-sales-body""></tbody>
+                                    </table>
+                                </div>
+
+                                <div style=""display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0 8px;"">
+                                    <h3 style=""margin: 0; font-size: 15px;"">Receipts (not node distributions) and sends</h3>
+                                    <a href=""#"" id=""pnl-transfers-csv"" class=""header-link"">Download CSV</a>
+                                </div>
+                                <div class=""data-table-wrap pnl-table-wrap"">
+                                    <table class=""data-table"">
+                                        <thead>
+                                            <tr>
+                                                <th>Time (UTC)</th>
+                                                <th>Direction</th>
+                                                <th>Counterparty</th>
+                                                <th>Type</th>
+                                                <th style=""text-align: right;"">OPT</th>
+                                                <th style=""text-align: right;"">Price</th>
+                                                <th style=""text-align: right;"">Value (USD)</th>
+                                                <th>Memo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id=""pnl-transfers-body""></tbody>
+                                    </table>
+                                </div>
+
+                                <h3 style=""margin: 20px 0 4px; font-size: 15px;"">Counterparties</h3>
+                                <div style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;"">Tick wallets you own; they are added to <a href=""/page/my-wallets"">My Wallets</a>. Their transfers are left out, so moving tokens between your own wallets isn't counted as a sale or purchase.</div>
+                                <div class=""data-table-wrap pnl-table-wrap"">
+                                    <table class=""data-table"">
+                                        <thead>
+                                            <tr>
+                                                <th>My wallet</th>
+                                                <th>Address</th>
+                                                <th style=""text-align: right;"">Received from (OPT)</th>
+                                                <th style=""text-align: right;"">Sent to (OPT)</th>
+                                                <th style=""text-align: right;"">Transfers</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id=""pnl-counterparties-body""></tbody>
+                                    </table>
+                                </div>
+
+                                <div id=""pnl-notes"" style=""color: var(--text-muted); font-size: 12px; margin-top: 12px; line-height: 1.5;""></div>
+                            </div>
+                        </div>
+                    </div>
+                    <script>
+                        (function () {
+                            const $ = (id) => document.getElementById(id);
+                            const form = $('pnl-form');
+                            const input = $('pnl-input');
+                            const yearSelect = $('pnl-year');
+                            const submit = $('pnl-submit');
+                            const status = $('pnl-status');
+                            const summary = $('pnl-summary');
+                            const results = $('pnl-results');
+                            const lossesOnly = $('pnl-losses-only');
+                            // Distributions are taxed differently, so by default they are left out of P&L entirely.
+                            const includeDist = $('pnl-include-dist');
+                            try { includeDist.checked = localStorage.getItem('optic-pnl-include-dist') === '1'; } catch (e) { }
+                            const EPS = 1e-9;
+                            const CATEGORY = {
+                                distribution: 'Node distribution',
+                                reward: 'Staking reward',
+                                wallet: 'Wallet',
+                                fee: 'Network fee',
+                                module: 'Module account',
+                                unknown: 'Before tracked history',
+                                unmatched: 'Not matched to a purchase'
+                            };
+
+                            const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
+                            // A send whose memo says gift or loan is not a sale.
+                            const memoKind = (e) => e.direction === 'out' && e.category === 'wallet'
+                                ? (/\bgift/i.test(e.memo || '') ? 'gift' : /\bloan/i.test(e.memo || '') ? 'loan' : null)
+                                : null;
+                            const KIND_LABEL = { gift: 'Gift (memo)', loan: 'Loan (memo)' };
+                            const exchangeOf = (a) => window.opticWallets.exchange(a);
+                            // Describes a transfer with a saved exchange, e.g. Exchange · Coinstore, sold (your account).
+                            const exchangeLabel = (e) => {
+                                const x = exchangeOf(e.counterparty);
+                                if (!x) return null;
+                                let text = `<strong>Exchange · ${esc(x.n)}</strong>, ${e.direction === 'out' ? 'sold' : 'bought'}`;
+                                if (e.direction === 'out' && x.m) {
+                                    text += (e.memo || '').trim() === x.m
+                                        ? ' (your account)'
+                                        : ` <span style=""color: var(--warning);"" title=""Memo differs from your saved deposit memo"">(memo ${e.memo ? 'differs' : 'missing'}: not your account?)</span>`;
+                                }
+                                return text;
+                            };
+                            const counterpartyName = (a) => { const x = exchangeOf(a); return x ? x.n : short(a); };
+                            const fmtOpt = (v) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+                            const fmtUsd = (v) => v == null ? '-' : (v < 0 ? '-$' : '$') + Math.abs(Number(v)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            // No sign on amounts that round to $0.00.
+                            const fmtSigned = (v) => v == null ? '-' : (v >= 0.005 ? '+' : v <= -0.005 ? '-' : '') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            const fmtPrice = (v) => v == null ? '-' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+                            const fmtTime = (v) => String(v || '').replace('T', ' ').replace(/\.\d+/, '').replace('Z', '');
+                            const fmtDay = (v) => fmtTime(v).slice(0, 10);
+                            const short = (a) => a.length > 20 ? a.slice(0, 12) + '...' + a.slice(-6) : a;
+                            const tile = (label, value, sub) => `<div class=""metric-card""><div style=""color: var(--text-secondary); font-size: 12px;"">${label}</div><div style=""font-size: 18px; font-weight: 600; margin-top: 4px;"">${value}</div>${sub ? `<div style=""font-size: 12px; color: var(--text-secondary); margin-top: 2px;"">${sub}</div>` : ''}</div>`;
+                            const gainCell = (v, partial) => {
+                                if (v == null) return '<td class=""amount-cell"">-</td>';
+                                const loss = v < -0.005;
+                                const label = loss ? 'Loss' : v > 0.005 ? 'Gain' : '';
+                                return `<td class=""amount-cell"" style=""${loss ? 'color: var(--error); font-weight: 600;' : ''}"" title=""${partial ? 'Cost or sale price unknown for part of this amount; only the priced part is included' : label}"">${fmtSigned(v)}${partial ? '*' : ''}${label ? ` <span style=""font-size: 11px;"">${label}</span>` : ''}</td>`;
+                            };
+
+                            const firstYear = 2024;
+                            const currentYear = new Date().getUTCFullYear();
+                            yearSelect.innerHTML = '<option value="""">All years</option>' +
+                                Array.from({ length: currentYear - firstYear + 1 }, (_, i) => currentYear - i).map(y => `<option value=""${y}"">${y}</option>`).join('');
+
+                            let loaded = null;        // { address, data }
+                            let excluded = new Set(); // counterparties marked as the user's own wallets
+                            let view = null;          // last computed FIFO result
+                            const expanded = new Set();
+
+                            // The user's other wallets (from My Wallets) are the counterparties left out of P&L.
+                            const refreshExcluded = () => {
+                                excluded = new Set(window.opticWallets.list().map(w => w.a).filter(a => !loaded || a !== loaded.address));
+                            };
+                            const ownLabel = (a) => window.opticWallets.label(a) || 'My wallet';
+                            const renderWallets = () => window.opticWallets.renderSwitcher(
+                                $('pnl-wallets'),
+                                loaded ? loaded.address : null,
+                                (address) => { input.value = address; run(address); });
+
+                            // Walks the ledger oldest first. Receipts that are income or purchases become lots
+                            // (cost = market price when received); sends to wallets are sales matched to the oldest lots.
+                            const computeFifo = (entries) => {
+                                const lots = [];
+                                const sales = [];
+                                let feeOpt = 0;
+                                const giftsLoans = [];
+                                for (const e of entries) {
+                                    if (e.category === 'wallet' && excluded.has(e.counterparty)) continue;
+                                    if (e.direction === 'in') {
+                                        if ((e.category === 'distribution' && includeDist.checked) || e.category === 'reward' || e.category === 'wallet')
+                                            lots.push({ time: e.timeUtc, qty: e.amountOpt, price: e.priceUsd, source: e.category });
+                                        continue; // module receipts return the wallet's own tokens (e.g. unbonding)
+                                    }
+                                    if (e.category === 'module') continue;
+                                    if (e.category === 'fee') feeOpt += e.amountOpt;
+
+                                    // Gifts and loans leave the wallet (using up the oldest tokens) but aren't sales.
+                                    const kind = memoKind(e);
+                                    if (kind) giftsLoans.push({ kind, time: e.timeUtc, qty: e.amountOpt, cost: 0 });
+                                    const sale = e.category === 'wallet' && !kind
+                                        ? { time: e.timeUtc, txHash: e.txHash, counterparty: e.counterparty, memo: e.memo, qty: e.amountOpt, price: e.priceUsd, parts: [] }
+                                        : null;
+                                    let remaining = e.amountOpt;
+                                    while (remaining > EPS && lots.length) {
+                                        const lot = lots[0];
+                                        const qty = Math.min(lot.qty, remaining);
+                                        if (sale) sale.parts.push({ qty, acqTime: lot.time, acqPrice: lot.price, source: lot.source });
+                                        if (kind && lot.price != null) giftsLoans[giftsLoans.length - 1].cost += qty * lot.price;
+                                        lot.qty -= qty;
+                                        remaining -= qty;
+                                        if (lot.qty <= EPS) lots.shift();
+                                    }
+                                    if (sale && remaining > EPS) sale.parts.push({ qty: remaining, acqTime: null, acqPrice: null, source: includeDist.checked ? 'unknown' : 'unmatched' });
+                                    if (sale) sales.push(sale);
+                                }
+
+                                for (const s of sales) {
+                                    const saleMs = Date.parse(s.time);
+                                    s.proceeds = s.price != null ? s.qty * s.price : null;
+                                    s.cost = 0; s.gain = 0; s.shortGain = 0; s.longGain = 0; s.unknownQty = 0;
+                                    let hasShort = false, hasLong = false;
+                                    for (const p of s.parts) {
+                                        p.long = p.acqTime != null && (saleMs - Date.parse(p.acqTime)) / 86400000 > 365;
+                                        if (p.acqTime != null) { if (p.long) hasLong = true; else hasShort = true; }
+                                        if (p.acqPrice == null || s.price == null) { s.unknownQty += p.qty; continue; }
+                                        const g = p.qty * (s.price - p.acqPrice);
+                                        s.cost += p.qty * p.acqPrice;
+                                        s.gain += g;
+                                        if (p.long) s.longGain += g; else s.shortGain += g;
+                                    }
+                                    if (s.unknownQty >= s.qty - EPS) { s.cost = null; s.gain = null; }
+                                    s.term = hasLong && hasShort ? 'Mixed' : hasLong ? 'Long' : hasShort ? 'Short' : '-';
+                                    const dated = s.parts.filter(p => p.acqTime);
+                                    s.acqFrom = dated.length ? dated[0].acqTime : null;
+                                    s.acqTo = dated.length ? dated[dated.length - 1].acqTime : null;
+                                }
+                                return { lots, sales, feeOpt, giftsLoans };
+                            };
+
+                            const inYear = (time) => !yearSelect.value || String(time).startsWith(yearSelect.value);
+
+                            const renderSummary = () => {
+                                const data = loaded.data;
+                                const entries = data.entries.filter(e => inYear(e.timeUtc) && !(e.category === 'wallet' && excluded.has(e.counterparty)));
+                                const sum = (list, f) => list.reduce((s, e) => s + (f(e) || 0), 0);
+                                const value = (e) => e.priceUsd != null ? e.amountOpt * e.priceUsd : 0;
+                                const by = (dir, cat) => entries.filter(e => e.direction === dir && e.category === cat);
+                                const dist = by('in', 'distribution'), other = by('in', 'wallet'), rewards = by('in', 'reward');
+                                const sent = by('out', 'wallet').filter(e => !memoKind(e));
+                                const gl = view.giftsLoans.filter(g => inYear(g.time));
+                                const ex = entries.filter(e => e.category === 'wallet' && exchangeOf(e.counterparty));
+                                const exNames = [...new Set(ex.map(e => exchangeOf(e.counterparty).n))];
+                                const gifted = gl.filter(g => g.kind === 'gift'), lent = gl.filter(g => g.kind === 'loan');
+                                const own = data.entries.filter(e => inYear(e.timeUtc) && e.category === 'wallet' && excluded.has(e.counterparty));
+                                const ownIn = own.filter(e => e.direction === 'in'), ownOut = own.filter(e => e.direction === 'out');
+                                const sales = view.sales.filter(s => inYear(s.time));
+                                const gains = sum(sales, s => s.gain > 0 ? s.gain : 0);
+                                const losses = sum(sales, s => s.gain < 0 ? s.gain : 0);
+                                const net = gains + losses;
+                                const lossCount = sales.filter(s => s.gain < -0.005).length;
+
+                                const holdQty = sum(view.lots, l => l.qty);
+                                const pricedLots = view.lots.filter(l => l.price != null);
+                                const holdCost = sum(pricedLots, l => l.qty * l.price);
+                                const unpricedQty = holdQty - sum(pricedLots, l => l.qty);
+                                const holdValue = data.latestPrice != null ? holdQty * data.latestPrice : null;
+                                // Unrealized only over lots with a known cost; unpriced lots would overstate it.
+                                const unrealized = data.latestPrice != null ? sum(pricedLots, l => l.qty) * data.latestPrice - holdCost : null;
+                                const yearLabel = yearSelect.value || 'all years';
+
+                                summary.innerHTML =
+                                    (includeDist.checked
+                                        ? tile('Received: node distributions', fmtOpt(sum(dist, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(dist, value))} when received · ${dist.length.toLocaleString('en-US')} payouts`)
+                                        : '') +
+                                    tile('Received: other wallets', fmtOpt(sum(other, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(other, value))} when received · ${other.length.toLocaleString('en-US')} transfers`) +
+                                    tile('Received: staking rewards', fmtOpt(sum(rewards, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(rewards, value))} when received`) +
+                                    tile('Sold (sent to other wallets)', fmtOpt(sum(sent, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(sent, value))} when sent · ${sent.length.toLocaleString('en-US')} transfers`) +
+                                    tile('Exchanges', `${fmtOpt(sum(ex.filter(e => e.direction === 'out'), e => e.amountOpt))} sent · ${fmtOpt(sum(ex.filter(e => e.direction === 'in'), e => e.amountOpt))} received`,
+                                        ex.length ? esc(exNames.join(', ')) : 'Add exchange addresses on <a href=""/page/my-wallets"">My Wallets</a>') +
+                                    tile('Gifts &amp; loans sent', `${fmtOpt(sum(gifted, g => g.qty))} gifted · ${fmtOpt(sum(lent, g => g.qty))} lent`,
+                                        gl.length ? `${gl.length.toLocaleString('en-US')} sends with gift/loan memo · cost basis ${fmtUsd(sum(gl, g => g.cost))}; not sales` : 'Sends whose memo says gift or loan') +
+                                    tile('Between my wallets', `${fmtOpt(sum(ownIn, e => e.amountOpt))} in · ${fmtOpt(sum(ownOut, e => e.amountOpt))} out`,
+                                        own.length ? `${own.length.toLocaleString('en-US')} transfers, not counted as purchases or sales` : 'Add your wallets on <a href=""/page/my-wallets"">My Wallets</a>') +
+                                    tile('Realized gains', fmtSigned(gains), `${yearLabel}`) +
+                                    tile('Realized losses', `<span style=""color: ${losses < 0 ? 'var(--error)' : 'inherit'};"">${fmtSigned(losses)}</span>`, `${lossCount.toLocaleString('en-US')} sale(s) at a loss`) +
+                                    tile('Net realized P&amp;L', `<span style=""color: ${net < -0.005 ? 'var(--error)' : 'inherit'};"">${fmtSigned(net)}</span>`, `Short-term ${fmtSigned(sum(sales, s => s.shortGain))} · Long-term ${fmtSigned(sum(sales, s => s.longGain))}`) +
+                                    tile(includeDist.checked ? 'Current holdings (FIFO)' : 'Unsold purchases (FIFO)', fmtOpt(holdQty) + ' OPT', `Cost ${fmtUsd(holdCost)} · Value ${fmtUsd(holdValue)} at ${fmtPrice(data.latestPrice)}` +
+                                        (unrealized != null ? ` · Unrealized ${fmtSigned(unrealized)}` : '') +
+                                        (unpricedQty > EPS ? ` · ${fmtOpt(unpricedQty)} OPT has no cost basis` : ''));
+                                summary.style.display = 'grid';
+                            };
+
+                            const renderSales = () => {
+                                const rows = view.sales.filter(s => inYear(s.time) && (!lossesOnly.checked || s.gain < -0.005)).reverse();
+                                const body = $('pnl-sales-body');
+                                if (rows.length === 0) {
+                                    body.innerHTML = `<tr><td colspan=""10"" style=""text-align: center; color: var(--text-secondary);"">${lossesOnly.checked ? 'No sales at a loss' : 'No sends to other wallets'}${yearSelect.value ? ' in ' + yearSelect.value : ''}</td></tr>`;
+                                    return;
+                                }
+                                body.innerHTML = rows.map(s => {
+                                    const key = s.txHash + '|' + s.counterparty;
+                                    const open = expanded.has(key);
+                                    const acquired = s.acqFrom ? (fmtDay(s.acqFrom) === fmtDay(s.acqTo) ? fmtDay(s.acqFrom) : fmtDay(s.acqFrom) + ' to ' + fmtDay(s.acqTo))
+                                        : s.parts.every(p => p.source === 'unmatched') ? 'Not matched to a purchase' : 'Unknown';
+                                    let html = `
+                                        <tr data-sale=""${esc(key)}"" style=""cursor: pointer;"" title=""Click to show the tokens this sale used"">
+                                            <td>${open ? '&#9662;' : '&#9656;'} ${fmtTime(s.time)}</td>
+                                            <td class=""address-cell"" title=""${esc(s.counterparty)}"">${esc(counterpartyName(s.counterparty))}</td>
+                                            <td class=""amount-cell"">${fmtOpt(s.qty)}</td>
+                                            <td class=""amount-cell"">${fmtPrice(s.price)}</td>
+                                            <td class=""amount-cell"">${fmtUsd(s.proceeds)}</td>
+                                            <td class=""amount-cell"">${fmtUsd(s.cost)}</td>
+                                            ${gainCell(s.gain, s.unknownQty > EPS && s.gain != null)}
+                                            <td>${acquired}</td>
+                                            <td>${s.term}</td>
+                                            <td class=""memo-cell"" title=""${esc(s.memo)}"">${esc(s.memo)}</td>
+                                        </tr>`;
+                                    if (open) {
+                                        // Collapse same-day, same-source lots so long payout histories stay readable.
+                                        const groups = [];
+                                        for (const p of s.parts) {
+                                            const day = p.acqTime ? fmtDay(p.acqTime) : 'Unknown';
+                                            const last = groups[groups.length - 1];
+                                            if (last && last.day === day && last.source === p.source) { last.qty += p.qty; last.cost += p.acqPrice != null ? p.qty * p.acqPrice : 0; last.unpriced ||= p.acqPrice == null; }
+                                            else groups.push({ day, source: p.source, qty: p.qty, cost: p.acqPrice != null ? p.qty * p.acqPrice : 0, unpriced: p.acqPrice == null, long: p.long });
+                                        }
+                                        html += groups.map(g => {
+                                            const unit = !g.unpriced && g.qty > 0 ? g.cost / g.qty : null;
+                                            const gain = unit != null && s.price != null ? g.qty * (s.price - unit) : null;
+                                            return `<tr style=""background: var(--surface-light); font-size: 12px;"">
+                                                <td style=""padding-left: 28px;"">${g.day}</td>
+                                                <td>${CATEGORY[g.source] || g.source}</td>
+                                                <td class=""amount-cell"">${fmtOpt(g.qty)}</td>
+                                                <td class=""amount-cell"" title=""Average cost per OPT"">${fmtPrice(unit)}</td>
+                                                <td class=""amount-cell"">${s.price != null ? fmtUsd(g.qty * s.price) : '-'}</td>
+                                                <td class=""amount-cell"">${unit != null ? fmtUsd(g.cost) : '-'}</td>
+                                                ${gainCell(gain, false)}
+                                                <td></td>
+                                                <td>${g.day === 'Unknown' ? '-' : g.long ? 'Long' : 'Short'}</td>
+                                                <td></td>
+                                            </tr>`;
+                                        }).join('');
+                                    }
+                                    return html;
+                                }).join('');
+                            };
+
+                            const renderTransfers = () => {
+                                const rows = loaded.data.entries.filter(e => e.category !== 'distribution' && inYear(e.timeUtc)).slice().reverse();
+                                const body = $('pnl-transfers-body');
+                                body.innerHTML = rows.length === 0
+                                    ? `<tr><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No receipts or sends outside node distributions${yearSelect.value ? ' in ' + yearSelect.value : ''}</td></tr>`
+                                    : rows.map(e => {
+                                        const own = e.category === 'wallet' && excluded.has(e.counterparty);
+                                        return `<tr style=""${own ? 'background: var(--surface-light);' : ''}"">
+                                            <td>${fmtTime(e.timeUtc)}</td>
+                                            <td>${e.direction === 'in' ? 'Received' : 'Sent'}</td>
+                                            <td class=""address-cell"" title=""${esc(e.counterparty)}"">${esc(short(e.counterparty))}</td>
+                                            <td>${own ? `<strong>My wallet</strong> · ${esc(ownLabel(e.counterparty))}` : memoKind(e) ? `<strong>${KIND_LABEL[memoKind(e)]}</strong>` : exchangeLabel(e) || CATEGORY[e.category] || e.category}</td>
+                                            <td class=""amount-cell"">${fmtOpt(e.amountOpt)}</td>
+                                            <td class=""amount-cell"">${fmtPrice(e.priceUsd)}</td>
+                                            <td class=""amount-cell"">${e.priceUsd != null ? fmtUsd(e.amountOpt * e.priceUsd) : '-'}</td>
+                                            <td class=""memo-cell"" title=""${esc(e.memo)}"">${esc(e.memo)}</td>
+                                        </tr>`;
+                                    }).join('');
+                            };
+
+                            const renderCounterparties = () => {
+                                const map = new Map();
+                                for (const e of loaded.data.entries) {
+                                    if (e.category !== 'wallet') continue;
+                                    const c = map.get(e.counterparty) || { address: e.counterparty, inOpt: 0, outOpt: 0, count: 0 };
+                                    if (e.direction === 'in') c.inOpt += e.amountOpt; else c.outOpt += e.amountOpt;
+                                    c.count++;
+                                    map.set(e.counterparty, c);
+                                }
+                                // Own wallets first, then by volume.
+                                const rows = [...map.values()].sort((a, b) =>
+                                    (excluded.has(b.address) - excluded.has(a.address)) || ((b.inOpt + b.outOpt) - (a.inOpt + a.outOpt)));
+                                $('pnl-counterparties-body').innerHTML = rows.length === 0
+                                    ? '<tr><td colspan=""5"" style=""text-align: center; color: var(--text-secondary);"">No wallet-to-wallet transfers</td></tr>'
+                                    : rows.map(c => `<tr>
+                                        <td><input type=""checkbox"" data-own=""${esc(c.address)}"" ${excluded.has(c.address) ? 'checked' : ''} aria-label=""Mark ${esc(c.address)} as my wallet""></td>
+                                        <td class=""address-cell"">${esc(c.address)}${excluded.has(c.address) ? `<div style=""font-size: 11px; color: var(--text-secondary); font-family: inherit;"">${esc(ownLabel(c.address))}</div>` : exchangeOf(c.address) ? `<div style=""font-size: 11px; color: var(--text-secondary); font-family: inherit;"">Exchange · ${esc(exchangeOf(c.address).n)}</div>` : ''}</td>
+                                        <td class=""amount-cell"">${fmtOpt(c.inOpt)}</td>
+                                        <td class=""amount-cell"">${fmtOpt(c.outOpt)}</td>
+                                        <td class=""amount-cell"">${c.count.toLocaleString('en-US')}</td>
+                                    </tr>`).join('');
+                            };
+
+                            const renderNotes = () => {
+                                const d = loaded.data;
+                                const notes = [
+                                    'How this works: node distributions and staking rewards are counted as acquired at the market price when received; receipts from other wallets and exchanges are treated as purchases at the market price at that time; each send to another wallet or an exchange is treated as a sale at the market price at that time and matched to the oldest unsold tokens first. For exchanges, the actual trade may have happened later at a different price.',
+                                    `Prices are ${esc(d.priceSource)} hourly closes, not the price you actually traded at on an exchange. Wallets saved on My Wallets (or ticked above) are treated as yours, so transfers between them aren't counted. Sends whose memo contains gift or loan are treated as gifts or loans: they use up the oldest tokens but are not sales. Long-term = held more than 365 days. This is an estimate, not tax advice.`
+                                ];
+                                if (view.feeOpt > 0) notes.push(`Network fees (${fmtOpt(view.feeOpt)} OPT) reduce holdings but aren't counted as sales.`);
+                                const unknown = view.sales.reduce((s, x) => s + x.unknownQty, 0);
+                                if (!includeDist.checked) notes.unshift('Node distributions are left out (they are taxed differently): they are not counted as tokens acquired, so sends are matched only to tokens bought or received from other wallets. Tick ""Count node distributions as acquired tokens"" to include them at their market value when received.');
+                                if (unknown > EPS) notes.push(`* ${fmtOpt(unknown)} OPT of sales have no sale price or no cost basis (market data ends ${d.priceDataTo ? fmtDay(d.priceDataTo) : 'unknown'}, ${includeDist.checked ? 'or tokens came from before the tracked history' : 'or more was sent than was bought'}) and are left out of gains and losses.`);
+                                if (d.truncated) notes.push('History was capped at 20,000 transactions per direction; older activity may be missing.');
+                                $('pnl-notes').innerHTML = notes.map(n => `<p style=""margin: 0 0 4px;"">${n}</p>`).join('');
+                            };
+
+                            const updateUrl = () => {
+                                const params = new URLSearchParams();
+                                if (loaded) params.set('address', loaded.address);
+                                if (yearSelect.value) params.set('year', yearSelect.value);
+                                const qs = params.toString();
+                                history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+                            };
+
+                            const renderAll = (recompute) => {
+                                if (!loaded) return;
+                                if (recompute || !view) view = computeFifo(loaded.data.entries);
+                                updateUrl();
+                                renderSummary();
+                                renderSales();
+                                renderTransfers();
+                                renderCounterparties();
+                                renderNotes();
+                                results.hidden = false;
+                                status.textContent = `${loaded.data.entries.length.toLocaleString('en-US')} transfers found for ${loaded.address}.`;
+                            };
+
+                            const downloadCsv = (filename, header, rows) => {
+                                const cell = (v) => { const s = v == null ? '' : String(v); return /[,\x22\n]/.test(s) ? '\x22' + s.replace(/\x22/g, '\x22\x22') + '\x22' : s; };
+                                const text = [header, ...rows].map(r => r.map(cell).join(',')).join('\n');
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+                                a.download = filename;
+                                a.click();
+                                setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                            };
+                            const suffix = () => loaded.address + (yearSelect.value ? '-' + yearSelect.value : '');
+
+                            $('pnl-sales-csv').addEventListener('click', (e) => {
+                                e.preventDefault();
+                                if (!view) return;
+                                const rows = [];
+                                for (const s of view.sales.filter(x => inYear(x.time))) {
+                                    for (const p of s.parts) {
+                                        const proceeds = s.price != null ? p.qty * s.price : null;
+                                        const cost = p.acqPrice != null ? p.qty * p.acqPrice : null;
+                                        rows.push([fmtTime(s.time), s.txHash, s.counterparty, s.memo, p.qty, s.price, proceeds, p.acqTime ? fmtTime(p.acqTime) : '', CATEGORY[p.source] || p.source, p.acqPrice, cost,
+                                            proceeds != null && cost != null ? proceeds - cost : '', p.acqTime ? (p.long ? 'Long' : 'Short') : '']);
+                                    }
+                                }
+                                downloadCsv(`pnl-sales-${suffix()}.csv`,
+                                    ['sold_utc', 'tx_hash', 'sent_to', 'memo', 'qty_opt', 'sale_price_usd', 'proceeds_usd', 'acquired_utc', 'acquired_from', 'cost_price_usd', 'cost_basis_usd', 'gain_loss_usd', 'term'], rows);
+                            });
+
+                            $('pnl-transfers-csv').addEventListener('click', (e) => {
+                                e.preventDefault();
+                                if (!loaded) return;
+                                const rows = loaded.data.entries.filter(x => x.category !== 'distribution' && inYear(x.timeUtc)).map(x => [
+                                    fmtTime(x.timeUtc), x.height, x.txHash, x.direction === 'in' ? 'received' : 'sent', x.counterparty, memoKind(x) ? KIND_LABEL[memoKind(x)] : CATEGORY[x.category] || x.category,
+                                    excluded.has(x.counterparty) ? 'yes' : '', exchangeOf(x.counterparty)?.n || '', x.amountOpt, x.priceUsd, x.priceUsd != null ? x.amountOpt * x.priceUsd : '', x.memo]);
+                                downloadCsv(`pnl-transfers-${suffix()}.csv`,
+                                    ['time_utc', 'height', 'tx_hash', 'direction', 'counterparty', 'type', 'my_wallet', 'exchange', 'amount_opt', 'price_usd', 'value_usd', 'memo'], rows);
+                            });
+
+                            $('pnl-sales-body').addEventListener('click', (e) => {
+                                const row = e.target.closest('tr[data-sale]');
+                                if (!row) return;
+                                const key = row.dataset.sale;
+                                if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
+                                renderSales();
+                            });
+
+                            $('pnl-counterparties-body').addEventListener('change', (e) => {
+                                const box = e.target.closest('input[data-own]');
+                                if (!box) return;
+                                if (box.checked) window.opticWallets.add(box.dataset.own); else window.opticWallets.remove(box.dataset.own);
+                                refreshExcluded();
+                                renderWallets();
+                                renderAll(true);
+                            });
+
+                            lossesOnly.addEventListener('change', renderSales);
+                            includeDist.addEventListener('change', () => {
+                                try { localStorage.setItem('optic-pnl-include-dist', includeDist.checked ? '1' : '0'); } catch (e) { }
+                                expanded.clear();
+                                renderAll(true);
+                            });
+                            yearSelect.addEventListener('change', () => { if (loaded && loaded.address === input.value.trim().toLowerCase()) renderAll(false); else updateUrl(); });
+
+                            const run = async (address) => {
+                                const done = window.opticBusy(submit, status, 'Reading wallet history');
+                                results.hidden = true;
+                                summary.style.display = 'none';
+                                status.textContent = 'Reading the wallet\x27s full transfer history from the node. Wallets with a long history can take a minute...';
+                                try {
+                                    const response = await fetch('/api/wallet/ledger?address=' + encodeURIComponent(address));
+                                    const data = await response.json();
+                                    if (!response.ok) throw new Error(data.error || 'Request failed');
+                                    loaded = { address: data.address, data };
+                                    refreshExcluded();
+                                    expanded.clear();
+                                    renderAll(true);
+                                    renderWallets();
+                                } catch (error) {
+                                    loaded = null;
+                                    view = null;
+                                    status.textContent = 'Error: ' + error.message;
+                                } finally {
+                                    done();
+                                }
+                            };
+
+                            form.addEventListener('submit', (e) => {
+                                e.preventDefault();
+                                const address = input.value.trim();
+                                if (address) run(address);
+                            });
+
+                            renderWallets();
+                            const params = new URLSearchParams(location.search);
+                            const y = params.get('year');
+                            if (y && [...yearSelect.options].some(o => o.value === y)) yearSelect.value = y;
+                            // No address in the link: open the primary wallet.
+                            const initial = params.get('address') || window.opticWallets.primary();
                             if (initial) {
                                 input.value = initial;
                                 run(initial);
@@ -4014,7 +5386,10 @@ public static class WebDashboard
                         <div class=""card-content"">
                             <div style=""display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;"">
                                 <div id=""price-chart-summary"" style=""color: var(--text-secondary); font-size: 13px;"">Loading price history...</div>
-                                <div id=""price-chart-ranges"" role=""group"" aria-label=""Time range"" style=""display: inline-flex; gap: 6px;""></div>
+                                <div style=""display: inline-flex; gap: 14px; flex-wrap: wrap;"">
+                                    <div id=""price-chart-scale"" role=""group"" aria-label=""Price scale"" style=""display: inline-flex; gap: 6px;""></div>
+                                    <div id=""price-chart-ranges"" role=""group"" aria-label=""Time range"" style=""display: inline-flex; gap: 6px;""></div>
+                                </div>
                             </div>
                             <div id=""price-chart"" style=""height: 240px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-light); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); position: relative;"">
                                 Loading price history...
@@ -4025,8 +5400,23 @@ public static class WebDashboard
                                     const chartEl = document.getElementById('price-chart');
                                     const summaryEl = document.getElementById('price-chart-summary');
                                     const rangesEl = document.getElementById('price-chart-ranges');
+                                    const scaleEl = document.getElementById('price-chart-scale');
                                     const noteEl = document.getElementById('price-chart-note');
-                                    const ranges = [['3M', 92], ['6M', 183], ['1Y', 365], ['ALL', 0]];
+                                    // Rolling ranges count back from the last close; YTD and the prior year are calendar (UTC) ranges.
+                                    const thisYear = new Date().getUTCFullYear();
+                                    const lastYear = String(thisYear - 1);
+                                    const rolling = (days) => (rows) => {
+                                        const end = parseDate(rows[rows.length - 1].date);
+                                        return rows.filter(r => (end - parseDate(r.date)) / 86400000 < days);
+                                    };
+                                    const ranges = [
+                                        ['3M', rolling(92), 'the last 3 months'],
+                                        ['6M', rolling(183), 'the last 6 months'],
+                                        ['1Y', rolling(365), 'the last year'],
+                                        ['YTD', (rows) => rows.filter(r => r.date.startsWith(String(thisYear))), 'year to date'],
+                                        [lastYear, (rows) => rows.filter(r => r.date.startsWith(lastYear)), lastYear],
+                                        ['ALL', (rows) => rows, 'all history']
+                                    ];
                                     const fmtPrice = (v) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
                                     const fmtAxis = (v) => v <= 0 ? '$0' : '$' + Number(v).toLocaleString('en-US', { maximumSignificantDigits: 3 });
                                     const parseDate = (value) => {
@@ -4037,12 +5427,19 @@ public static class WebDashboard
 
                                     let all = [];
                                     let activeRange = 'ALL';
+                                    let scale = 'linear';
+                                    try { if (localStorage.getItem('optic-price-scale') === 'log') scale = 'log'; } catch (e) { }
 
                                     const render = () => {
-                                        const days = ranges.find(r => r[0] === activeRange)[1];
-                                        const lastDate = parseDate(all[all.length - 1].date);
-                                        const rows = days === 0 ? all : all.filter(r => (lastDate - parseDate(r.date)) / 86400000 < days);
+                                        const range = ranges.find(r => r[0] === activeRange);
+                                        const rows = range[1](all);
+                                        if (rows.length === 0) {
+                                            chartEl.textContent = `No price data for ${range[2]}`;
+                                            summaryEl.textContent = '';
+                                            return;
+                                        }
                                         const prices = rows.map(r => Number(r.priceUsd));
+                                        const spanDays = (parseDate(rows[rows.length - 1].date) - parseDate(rows[0].date)) / 86400000;
 
                                         const width = 1100;
                                         const height = 200;
@@ -4054,17 +5451,39 @@ public static class WebDashboard
                                         const plotH = height - padT - padB;
                                         const rawMax = Math.max(...prices);
                                         const rawMin = Math.min(...prices);
-                                        const pad = (rawMax - rawMin) * 0.08 || rawMax * 0.05 || 1;
-                                        const maxVal = rawMax + pad;
-                                        const minVal = Math.max(0, rawMin - pad);
+                                        const isLog = scale === 'log' && rawMin > 0;
+                                        let minVal, maxVal, toY, tickValues;
+                                        if (isLog) {
+                                            // Pad by a fixed ratio so the line never touches the frame.
+                                            minVal = rawMin / 1.15;
+                                            maxVal = rawMax * 1.15;
+                                            const lo = Math.log10(minVal);
+                                            const span = (Math.log10(maxVal) - lo) || 1;
+                                            toY = (v) => padT + plotH - ((Math.log10(v) - lo) / span) * plotH;
+                                            // 1-2-5 ticks per decade; thin to powers of ten when too dense.
+                                            const ticks = [];
+                                            for (let e = Math.floor(lo) - 1; e <= Math.ceil(Math.log10(maxVal)); e++) {
+                                                for (const m of [1, 2, 5]) {
+                                                    const t = m * Math.pow(10, e);
+                                                    if (t >= minVal && t <= maxVal) ticks.push(t);
+                                                }
+                                            }
+                                            const decades = ticks.filter(t => Math.abs(Math.log10(t) - Math.round(Math.log10(t))) < 1e-9);
+                                            tickValues = ticks.length > 7 && decades.length >= 2 ? decades : ticks;
+                                            if (tickValues.length < 2) tickValues = [minVal, Math.sqrt(minVal * maxVal), maxVal];
+                                        } else {
+                                            const pad = (rawMax - rawMin) * 0.08 || rawMax * 0.05 || 1;
+                                            maxVal = rawMax + pad;
+                                            minVal = Math.max(0, rawMin - pad);
+                                            toY = (v) => padT + plotH - ((v - minVal) / (maxVal - minVal)) * plotH;
+                                            tickValues = [maxVal, (maxVal + minVal) / 2, minVal];
+                                        }
                                         const xStep = rows.length > 1 ? plotW / (rows.length - 1) : 0;
                                         const xFor = (i) => padL + i * xStep;
-                                        const toY = (v) => padT + plotH - ((v - minVal) / (maxVal - minVal)) * plotH;
 
                                         const points = prices.map((v, i) => `${xFor(i)},${toY(v)}`).join(' L ');
-                                        const gridLines = [0, 0.5, 1].map(p => {
-                                            const y = padT + p * plotH;
-                                            const value = maxVal - p * (maxVal - minVal);
+                                        const gridLines = tickValues.map(value => {
+                                            const y = toY(value);
                                             return `<line x1=""${padL}"" y1=""${y}"" x2=""${width - padR}"" y2=""${y}"" stroke=""var(--border)"" stroke-width=""1"" />` +
                                                 `<text x=""${padL - 8}"" y=""${y + 4}"" fill=""var(--text-secondary)"" font-size=""10"" text-anchor=""end"">${fmtAxis(value)}</text>`;
                                         }).join('');
@@ -4074,11 +5493,11 @@ public static class WebDashboard
                                         const xTicks = rows
                                             .map((row, idx) => ({ row, idx }))
                                             .filter(item => item.idx % tickStep === 0)
-                                            .map(item => `<text x=""${xFor(item.idx)}"" y=""${height - 8}"" fill=""var(--text-secondary)"" font-size=""10"" text-anchor=""middle"">${fmtDate(item.row.date, days === 0 || days > 183 ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' })}</text>`)
+                                            .map(item => `<text x=""${xFor(item.idx)}"" y=""${height - 8}"" fill=""var(--text-secondary)"" font-size=""10"" text-anchor=""middle"">${fmtDate(item.row.date, spanDays > 300 ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' })}</text>`)
                                             .join('');
 
                                         chartEl.innerHTML = `
-<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""xMinYMid meet"" role=""img"" aria-label=""OPT daily closing price in USD"">
+<svg viewBox=""0 0 ${width} ${height}"" width=""100%"" height=""100%"" preserveAspectRatio=""xMinYMid meet"" role=""img"" aria-label=""OPT daily closing price in USD, ${isLog ? 'log' : 'linear'} scale"">
   ${gridLines}
   <path d=""M ${points}"" fill=""none"" stroke=""var(--accent-primary)"" stroke-width=""2"" stroke-linejoin=""round"" stroke-linecap=""round""></path>
   ${xTicks}
@@ -4090,7 +5509,7 @@ public static class WebDashboard
                                         const sign = change > 0 ? '+' : '';
                                         summaryEl.innerHTML = `<span style=""color: var(--text-primary); font-weight: 600; font-size: 15px;"">${fmtPrice(last)}</span> ` +
                                             `<span>close ${fmtDate(rows[rows.length - 1].date, { year: 'numeric', month: 'short', day: '2-digit' })}</span> · ` +
-                                            `<span>${sign}${change.toFixed(1)}% over ${activeRange === 'ALL' ? 'all history' : activeRange}</span>`;
+                                            `<span>${sign}${change.toFixed(1)}% over ${range[2]}</span>`;
 
                                         const tooltip = document.createElement('div');
                                         Object.assign(tooltip.style, {
@@ -4151,11 +5570,21 @@ public static class WebDashboard
                                     };
 
                                     const renderRangeButtons = () => {
-                                        rangesEl.innerHTML = ranges.map(([label]) => {
-                                            const active = label === activeRange;
-                                            return `<button type=""button"" data-range=""${label}"" aria-pressed=""${active}"" style=""padding: 4px 10px; font-size: 11px; border-radius: 999px; border: 1px solid ${active ? 'var(--accent-primary)' : 'var(--border)'}; background: ${active ? 'var(--accent-primary)' : 'var(--surface)'}; color: ${active ? 'var(--bg-primary)' : 'var(--text-secondary)'}; cursor: pointer;"">${label}</button>`;
-                                        }).join('');
+                                        rangesEl.innerHTML = ranges.map(([label]) => pill('data-range', label, label, label === activeRange)).join('');
                                     };
+                                    const pill = (attr, value, label, active) =>
+                                        `<button type=""button"" ${attr}=""${value}"" aria-pressed=""${active}"" style=""padding: 4px 10px; font-size: 11px; border-radius: 999px; border: 1px solid ${active ? 'var(--accent-primary)' : 'var(--border)'}; background: ${active ? 'var(--accent-primary)' : 'var(--surface)'}; color: ${active ? 'var(--bg-primary)' : 'var(--text-secondary)'}; cursor: pointer;"">${label}</button>`;
+                                    const renderScaleButtons = () => {
+                                        scaleEl.innerHTML = pill('data-scale', 'linear', 'LINEAR', scale === 'linear') + pill('data-scale', 'log', 'LOG', scale === 'log');
+                                    };
+                                    scaleEl.addEventListener('click', (e) => {
+                                        const btn = e.target.closest('button[data-scale]');
+                                        if (!btn || all.length === 0) return;
+                                        scale = btn.dataset.scale;
+                                        try { localStorage.setItem('optic-price-scale', scale); } catch (err) { }
+                                        renderScaleButtons();
+                                        render();
+                                    });
                                     rangesEl.addEventListener('click', (e) => {
                                         const btn = e.target.closest('button[data-range]');
                                         if (!btn || all.length === 0) return;
@@ -4175,6 +5604,7 @@ public static class WebDashboard
                                             return;
                                         }
 
+                                        renderScaleButtons();
                                         renderRangeButtons();
                                         render();
                                         const lastDate = parseDate(all[all.length - 1].date);
@@ -5413,6 +6843,7 @@ sealed class AddressDistributionRow
     public DateTime TimeUtc { get; set; }
     public long Height { get; set; }
     public string TxHash { get; set; } = "";
+    public string Memo { get; set; } = "";
     public decimal AmountOpt { get; set; }
     public decimal? PriceUsd { get; set; }
     public decimal? ValueUsd => PriceUsd.HasValue ? AmountOpt * PriceUsd.Value : null;
@@ -5423,5 +6854,25 @@ sealed class AddressDistributionRow
 sealed class AddressDistributionReport
 {
     public List<AddressDistributionRow> Rows { get; set; } = new();
+    public bool Truncated { get; set; }
+}
+
+sealed class WalletLedgerEntry
+{
+    public DateTime TimeUtc { get; set; }
+    public long Height { get; set; }
+    public string TxHash { get; set; } = "";
+    public string Memo { get; set; } = "";
+    public string Direction { get; set; } = "";
+    public string Counterparty { get; set; } = "";
+    public string Category { get; set; } = "";
+    public decimal AmountOpt { get; set; }
+    public decimal? PriceUsd { get; set; }
+    public string? PriceInterval { get; set; }
+}
+
+sealed class WalletLedger
+{
+    public List<WalletLedgerEntry> Entries { get; set; } = new();
     public bool Truncated { get; set; }
 }
