@@ -324,16 +324,23 @@ public static class WebDashboard
                 var report = await GetAddressDistributionReportAsync(address, ctx.RequestAborted);
                 if (int.TryParse(ctx.Request.Query["year"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
                     report.Rows = report.Rows.Where(r => r.TimeUtc.Year == year).ToList();
+                var kind = ctx.Request.Query["type"].ToString();
+                if (kind is "node" or "staking")
+                    report.Rows = report.Rows.Where(r => r.Kind == kind).ToList();
+                else
+                    kind = "";
 
                 if (asCsv)
                 {
                     var csv = new System.Text.StringBuilder();
-                    csv.AppendLine("time_utc,height,tx_hash,amount_opt,price_usd,value_usd,price_interval,price_candle_open_utc,memo");
+                    csv.AppendLine("time_utc,height,tx_hash,type,type_inferred,amount_opt,price_usd,value_usd,price_interval,price_candle_open_utc,memo");
                     foreach (var r in report.Rows)
                     {
                         csv.Append(r.TimeUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)).Append(',')
                            .Append(r.Height.ToString(CultureInfo.InvariantCulture)).Append(',')
                            .Append(r.TxHash).Append(',')
+                           .Append(r.Kind == "staking" ? "staking/participation" : "node").Append(',')
+                           .Append(r.KindInferred ? "yes" : "no").Append(',')
                            .Append(r.AmountOpt.ToString("0.######", CultureInfo.InvariantCulture)).Append(',')
                            .Append(r.PriceUsd?.ToString("0.##########", CultureInfo.InvariantCulture) ?? "").Append(',')
                            .Append(r.ValueUsd?.ToString("0.####", CultureInfo.InvariantCulture) ?? "").Append(',')
@@ -341,7 +348,7 @@ public static class WebDashboard
                            .Append(r.PriceCandleOpenUtc?.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "").Append(',')
                            .AppendLine(CsvField(r.Memo));
                     }
-                    return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"distributions-{address}{(year > 0 ? "-" + year.ToString(CultureInfo.InvariantCulture) : "")}.csv");
+                    return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"distributions-{address}{(year > 0 ? "-" + year.ToString(CultureInfo.InvariantCulture) : "")}{(kind.Length > 0 ? "-" + kind : "")}.csv");
                 }
 
                 var priceRange = TokenPriceService.AvailableRange;
@@ -362,6 +369,8 @@ public static class WebDashboard
                         height = r.Height,
                         txHash = r.TxHash,
                         memo = r.Memo,
+                        kind = r.Kind,
+                        kindInferred = r.KindInferred,
                         amountOpt = r.AmountOpt,
                         priceUsd = r.PriceUsd,
                         valueUsd = r.ValueUsd,
@@ -802,6 +811,7 @@ public static class WebDashboard
         foreach (var row in report.Rows)
             row.TimeUtc = _blockTimeCache[row.Height];
         report.Rows.Sort((a, b) => a.Height.CompareTo(b.Height));
+        ClassifyDistributionKinds(report.Rows);
 
         var prices = await TokenPriceService.GetPricesAtAsync(report.Rows.Select(r => r.TimeUtc).Distinct().ToList(), ct);
         foreach (var row in report.Rows)
@@ -815,6 +825,56 @@ public static class WebDashboard
         }
 
         return report;
+    }
+
+    /// <summary>
+    /// The distribution account pays both node rewards and staking/participation rewards. When both
+    /// land on the same UTC day the node payout is the large one and the staking payout is far smaller
+    /// (a few percent of it). Days with such a clear split are labelled directly; payouts on other days
+    /// (a single payout, or several of similar size) take the kind whose amounts they are closest to
+    /// on the nearest split days before and after, and are marked as inferred.
+    /// </summary>
+    static void ClassifyDistributionKinds(List<AddressDistributionRow> rows)
+    {
+        const decimal SplitRatio = 0.10m;
+        var byDay = rows.GroupBy(r => r.TimeUtc.Date).OrderBy(g => g.Key).ToList();
+        var splitDays = new List<List<AddressDistributionRow>>();
+        var splitIndexByDay = new Dictionary<DateTime, int>();
+
+        foreach (var day in byDay)
+        {
+            var max = day.Max(r => r.AmountOpt);
+            if (day.Count() < 2 || day.Min(r => r.AmountOpt) >= SplitRatio * max)
+                continue;
+            foreach (var r in day)
+            {
+                r.Kind = r.AmountOpt >= SplitRatio * max ? "node" : "staking";
+                r.KindInferred = false;
+            }
+            splitIndexByDay[day.Key] = splitDays.Count;
+            splitDays.Add(day.ToList());
+        }
+
+        var splitDates = splitIndexByDay.Keys.ToList();
+        foreach (var day in byDay)
+        {
+            if (splitIndexByDay.ContainsKey(day.Key))
+                continue;
+            var next = splitDates.BinarySearch(day.Key);
+            next = next < 0 ? ~next : next;
+            var refs = new[] { next - 1, next }
+                .Where(i => i >= 0 && i < splitDays.Count)
+                .SelectMany(i => splitDays[i])
+                .ToList();
+            foreach (var r in day)
+            {
+                r.KindInferred = true;
+                double Distance(string kind) => refs.Where(x => x.Kind == kind && x.AmountOpt > 0 && r.AmountOpt > 0)
+                    .Select(x => Math.Abs(Math.Log((double)r.AmountOpt) - Math.Log((double)x.AmountOpt)))
+                    .DefaultIfEmpty(double.MaxValue).Min();
+                r.Kind = Distance("staking") < Distance("node") ? "staking" : "node";
+            }
+        }
     }
 
     /// <summary>
@@ -3988,6 +4048,14 @@ public static class WebDashboard
                                     <label for=""addr-dist-year"">Year</label>
                                     <select id=""addr-dist-year""></select>
                                 </div>
+                                <div class=""form-group"" style=""flex: 0 0 200px; margin-bottom: 0;"">
+                                    <label for=""addr-dist-type"">Type</label>
+                                    <select id=""addr-dist-type"">
+                                        <option value="""">Node and staking</option>
+                                        <option value=""node"">Node only</option>
+                                        <option value=""staking"">Staking / participation only</option>
+                                    </select>
+                                </div>
                                 <button type=""submit"" id=""addr-dist-submit"">Get Distributions</button>
                                 <a id=""addr-dist-csv"" class=""header-link"" href=""#"" hidden>Download CSV</a>
                             </form>
@@ -4022,6 +4090,7 @@ public static class WebDashboard
                                         <tr>
                                             <th>Time (UTC)</th>
                                             <th>Block</th>
+                                            <th style=""text-align: left;"">Type</th>
                                             <th style=""text-align: right;"">Amount (OPT)</th>
                                             <th style=""text-align: right;"">Price (USD)</th>
                                             <th style=""text-align: right;"">Value (USD)</th>
@@ -4052,6 +4121,8 @@ public static class WebDashboard
                             const tile = (label, value) => `<div class=""metric-card""><div style=""color: var(--text-secondary); font-size: 12px;"">${label}</div><div style=""font-size: 18px; font-weight: 600; margin-top: 4px;"">${value}</div></div>`;
 
                             const yearSelect = document.getElementById('addr-dist-year');
+                            const typeSelect = document.getElementById('addr-dist-type');
+                            const typeNames = { node: 'node', staking: 'staking / participation' };
                             const firstYear = 2024;
                             const currentYear = new Date().getUTCFullYear();
                             yearSelect.innerHTML = '<option value="""">All years</option>' +
@@ -4148,6 +4219,7 @@ public static class WebDashboard
                                 const params = new URLSearchParams();
                                 if (loaded) params.set('address', loaded.address);
                                 if (yearSelect.value) params.set('year', yearSelect.value);
+                                if (typeSelect.value) params.set('type', typeSelect.value);
                                 if (viewMode === 'price') params.set('view', 'price');
                                 const qs = params.toString();
                                 history.replaceState(null, '', qs ? '?' + qs : location.pathname);
@@ -4155,11 +4227,19 @@ public static class WebDashboard
                             };
 
                             // Draws the summary, table and notes for the selected year from the loaded rows.
+                            const kindCell = (r) => {
+                                const label = r.kind === 'staking' ? 'Staking / participation' : 'Node';
+                                return r.kindInferred
+                                    ? `<span style=""color: var(--text-secondary);"" title=""No clear node/staking pair that day; guessed from the amounts on nearby days"">${label} (est.)</span>`
+                                    : `<span title=""Same-day pair: the larger payout is from nodes, the smaller from staking / participation"">${label}</span>`;
+                            };
+
                             const renderView = () => {
                                 const data = loaded.data;
                                 const year = yearSelect.value;
+                                const type = typeSelect.value;
                                 const qs = updateUrl();
-                                const rows = (data.rows || []).filter(r => !year || String(r.timeUtc).startsWith(year));
+                                const rows = (data.rows || []).filter(r => (!year || String(r.timeUtc).startsWith(year)) && (!type || r.kind === type));
                                 csvLink.href = '/api/distributions/address?' + qs + '&format=csv';
 
                                 if (rows.length === 0) {
@@ -4170,7 +4250,7 @@ public static class WebDashboard
                                     csvLink.hidden = true;
                                     status.textContent = (data.rows || []).length === 0
                                         ? 'No distributions from optio103r5... found for this address.'
-                                        : `No distributions to this address in ${year}.`;
+                                        : `No ${type ? typeNames[type] + ' ' : ''}distributions to this address${year ? ' in ' + year : ''}.`;
                                     return;
                                 }
 
@@ -4181,14 +4261,19 @@ public static class WebDashboard
                                 const pricedOpt = priced.reduce((s, r) => s + r.amountOpt, 0);
                                 const high = priced.reduce((best, r) => !best || r.priceUsd > best.priceUsd ? r : best, null);
                                 const low = priced.reduce((best, r) => !best || r.priceUsd < best.priceUsd ? r : best, null);
+                                const kindTile = (label, kind) => {
+                                    const list = rows.filter(r => r.kind === kind);
+                                    return tile(label, `${fmtOpt(list.reduce((s, r) => s + r.amountOpt, 0))} OPT<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;"">${list.length.toLocaleString('en-US')} payouts · ${fmtUsd(list.reduce((s, r) => s + (r.valueUsd || 0), 0))}</div>`);
+                                };
                                 const priceTile = (label, r) => tile(label, r
                                     ? `${fmtPrice(r.priceUsd)}<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;"">${fmtTime(r.timeUtc).slice(0, 16)} UTC</div>`
                                     : '-');
                                 summary.innerHTML =
-                                    tile('Distributions', rows.length.toLocaleString('en-US')) +
+                                    tile(type === 'node' ? 'Node payouts' : type === 'staking' ? 'Staking / participation payouts' : 'Distributions', rows.length.toLocaleString('en-US')) +
                                     tile('Total OPT', fmtOpt(totalOpt)) +
                                     tile('Total value (USD)', fmtUsd(totalValueUsd)) +
                                     tile('Avg price (USD)', pricedOpt > 0 ? fmtPrice(totalValueUsd / pricedOpt) : '-') +
+                                    (type ? '' : kindTile('From nodes', 'node') + kindTile('Staking / participation', 'staking')) +
                                     priceTile('Highest price received', high) +
                                     priceTile('Lowest price received', low) +
                                     tile('First / last', fmtTime(rows[0].timeUtc).slice(0, 10) + ' to ' + fmtTime(rows[rows.length - 1].timeUtc).slice(0, 10));
@@ -4205,6 +4290,7 @@ public static class WebDashboard
                                         <tr>
                                             <td>${fmtTime(r.timeUtc)}</td>
                                             <td>${Number(r.height).toLocaleString('en-US')}</td>
+                                            <td>${kindCell(r)}</td>
                                             <td class=""amount-cell"">${fmtOpt(r.amountOpt)}</td>
                                             <td class=""amount-cell"" title=""${r.priceInterval === '1d' ? 'Daily close (no hourly price for this time)' : r.priceInterval === '1h' ? 'Hourly close' : 'No market price available'}"">${fmtPrice(r.priceUsd)}${r.priceInterval === '1d' ? '*' : ''}</td>
                                             <td class=""amount-cell"">${fmtUsd(r.valueUsd)}</td>
@@ -4220,6 +4306,7 @@ public static class WebDashboard
                                     const to = data.priceDataTo ? fmtTime(data.priceDataTo).slice(0, 10) : null;
                                     notes.push(`${unpricedCount.toLocaleString('en-US')} payout(s) have no price` + (to ? ` (market data ends ${to})` : '') + ' and are left out of the USD total.');
                                 }
+                                notes.push('Type: on days with both, the larger payout is from nodes and the smaller from staking / participation; (est.) = guessed from nearby days.');
                                 if (data.truncated) notes.push('Results were capped at 20,000 transactions.');
                                 status.textContent = notes.join(' ');
                                 csvLink.hidden = false;
@@ -4269,13 +4356,17 @@ public static class WebDashboard
                                     lines.push([b.label.replace(/\$/g, '').replace(' - ', ' to '), b.count, b.opt, b.value, b.avg, fmtTime(b.first), fmtTime(b.last)].map(cell).join(','));
                                 const a = document.createElement('a');
                                 a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
-                                a.download = `distributions-by-price-${loaded.address}${yearSelect.value ? '-' + yearSelect.value : ''}.csv`;
+                                a.download = `distributions-by-price-${loaded.address}${yearSelect.value ? '-' + yearSelect.value : ''}${typeSelect.value ? '-' + typeSelect.value : ''}.csv`;
                                 a.click();
                                 setTimeout(() => URL.revokeObjectURL(a.href), 1000);
                             });
 
                             // Switching years re-filters the rows already loaded; no new node query.
                             yearSelect.addEventListener('change', () => {
+                                if (loaded && loaded.address === input.value.trim()) renderView();
+                                else updateUrl();
+                            });
+                            typeSelect.addEventListener('change', () => {
                                 if (loaded && loaded.address === input.value.trim()) renderView();
                                 else updateUrl();
                             });
@@ -4289,6 +4380,8 @@ public static class WebDashboard
                             const initialParams = new URLSearchParams(location.search);
                             const initialYear = initialParams.get('year');
                             if (initialYear && yearSelect.querySelector(`option[value=""${CSS.escape(initialYear)}""]`)) yearSelect.value = initialYear;
+                            const initialType = initialParams.get('type');
+                            if (initialType === 'node' || initialType === 'staking') typeSelect.value = initialType;
                             // No address in the link: open the primary wallet.
                             const initial = initialParams.get('address') || window.opticWallets.primary();
                             if (initial) {
@@ -4355,7 +4448,10 @@ public static class WebDashboard
 
                                 <div style=""display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0 8px;"">
                                     <h3 style=""margin: 0; font-size: 15px;"">Receipts (not node distributions) and sends</h3>
-                                    <a href=""#"" id=""pnl-transfers-csv"" class=""header-link"">Download CSV</a>
+                                    <div style=""display: flex; gap: 16px; align-items: center;"">
+                                        <label style=""font-size: 13px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer;""><input type=""checkbox"" id=""pnl-show-repaid""> Show repaid loans</label>
+                                        <a href=""#"" id=""pnl-transfers-csv"" class=""header-link"">Download CSV</a>
+                                    </div>
                                 </div>
                                 <div class=""data-table-wrap pnl-table-wrap"">
                                     <table class=""data-table"">
@@ -4427,6 +4523,41 @@ public static class WebDashboard
                                 ? (/\bgift/i.test(e.memo || '') ? 'gift' : /\bloan/i.test(e.memo || '') ? 'loan' : null)
                                 : null;
                             const KIND_LABEL = { gift: 'Gift (memo)', loan: 'Loan (memo)' };
+                            const showRepaid = $('pnl-show-repaid');
+
+                            // A loan that came back is left out of P&L entirely: OPT received later from the address a
+                            // loan went to repays it (oldest loan first), and the repaid part of both the loan and the
+                            // repayment is dropped. Anything received beyond the amount lent is a normal receipt.
+                            // Sets e.repaidOpt on loan sends and repayment receipts; e.loanRepayment marks receipts.
+                            const pairLoans = (entries) => {
+                                const open = new Map(); // counterparty -> loan sends with an unpaid balance, oldest first
+                                for (const e of entries) {
+                                    e.repaidOpt = 0;
+                                    e.loanRepayment = false;
+                                    if (e.category !== 'wallet' || excluded.has(e.counterparty)) continue;
+                                    if (e.direction === 'out') {
+                                        if (memoKind(e) === 'loan') {
+                                            if (!open.has(e.counterparty)) open.set(e.counterparty, []);
+                                            open.get(e.counterparty).push(e);
+                                        }
+                                        continue;
+                                    }
+                                    const loans = open.get(e.counterparty);
+                                    let left = e.amountOpt;
+                                    while (loans && loans.length && left > EPS) {
+                                        const loan = loans[0];
+                                        const qty = Math.min(loan.amountOpt - loan.repaidOpt, left);
+                                        loan.repaidOpt += qty;
+                                        e.repaidOpt += qty;
+                                        left -= qty;
+                                        if (loan.amountOpt - loan.repaidOpt <= EPS) loans.shift();
+                                    }
+                                    e.loanRepayment = e.repaidOpt > EPS;
+                                }
+                            };
+                            // Amount that still counts after removing the repaid-loan part.
+                            const netOpt = (e) => Math.max(0, e.amountOpt - (e.repaidOpt || 0));
+                            const fullyRepaid = (e) => (e.repaidOpt || 0) > EPS && netOpt(e) <= EPS;
                             const exchangeOf = (a) => window.opticWallets.exchange(a);
                             // Describes a transfer with a saved exchange, e.g. Exchange · Coinstore, sold (your account).
                             const exchangeLabel = (e) => {
@@ -4484,11 +4615,13 @@ public static class WebDashboard
                                 const sales = [];
                                 let feeOpt = 0;
                                 const giftsLoans = [];
+                                pairLoans(entries);
                                 for (const e of entries) {
                                     if (e.category === 'wallet' && excluded.has(e.counterparty)) continue;
+                                    if (fullyRepaid(e)) continue;
                                     if (e.direction === 'in') {
                                         if ((e.category === 'distribution' && includeDist.checked) || e.category === 'reward' || e.category === 'wallet')
-                                            lots.push({ time: e.timeUtc, qty: e.amountOpt, price: e.priceUsd, source: e.category });
+                                            lots.push({ time: e.timeUtc, qty: netOpt(e), price: e.priceUsd, source: e.category });
                                         continue; // module receipts return the wallet's own tokens (e.g. unbonding)
                                     }
                                     if (e.category === 'module') continue;
@@ -4496,11 +4629,11 @@ public static class WebDashboard
 
                                     // Gifts and loans leave the wallet (using up the oldest tokens) but aren't sales.
                                     const kind = memoKind(e);
-                                    if (kind) giftsLoans.push({ kind, time: e.timeUtc, qty: e.amountOpt, cost: 0 });
+                                    if (kind) giftsLoans.push({ kind, time: e.timeUtc, qty: netOpt(e), cost: 0 });
                                     const sale = e.category === 'wallet' && !kind
                                         ? { time: e.timeUtc, txHash: e.txHash, counterparty: e.counterparty, memo: e.memo, qty: e.amountOpt, price: e.priceUsd, parts: [] }
                                         : null;
-                                    let remaining = e.amountOpt;
+                                    let remaining = netOpt(e);
                                     while (remaining > EPS && lots.length) {
                                         const lot = lots[0];
                                         const qty = Math.min(lot.qty, remaining);
@@ -4545,7 +4678,9 @@ public static class WebDashboard
                                 const sum = (list, f) => list.reduce((s, e) => s + (f(e) || 0), 0);
                                 const value = (e) => e.priceUsd != null ? e.amountOpt * e.priceUsd : 0;
                                 const by = (dir, cat) => entries.filter(e => e.direction === dir && e.category === cat);
-                                const dist = by('in', 'distribution'), other = by('in', 'wallet'), rewards = by('in', 'reward');
+                                const dist = by('in', 'distribution'), other = by('in', 'wallet').filter(e => !fullyRepaid(e)), rewards = by('in', 'reward');
+                                const repaidLoans = entries.filter(e => e.direction === 'out' && e.repaidOpt > EPS);
+                                const repayments = entries.filter(e => e.loanRepayment);
                                 const sent = by('out', 'wallet').filter(e => !memoKind(e));
                                 const gl = view.giftsLoans.filter(g => inYear(g.time));
                                 const ex = entries.filter(e => e.category === 'wallet' && exchangeOf(e.counterparty));
@@ -4572,13 +4707,17 @@ public static class WebDashboard
                                     (includeDist.checked
                                         ? tile('Received: node distributions', fmtOpt(sum(dist, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(dist, value))} when received · ${dist.length.toLocaleString('en-US')} payouts`)
                                         : '') +
-                                    tile('Received: other wallets', fmtOpt(sum(other, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(other, value))} when received · ${other.length.toLocaleString('en-US')} transfers`) +
+                                    tile('Received: other wallets', fmtOpt(sum(other, netOpt)) + ' OPT', `${fmtUsd(sum(other, e => netOpt(e) * (e.priceUsd || 0)))} when received · ${other.length.toLocaleString('en-US')} transfers` + (repayments.length ? ' · loan repayments left out' : '')) +
                                     tile('Received: staking rewards', fmtOpt(sum(rewards, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(rewards, value))} when received`) +
                                     tile('Sold (sent to other wallets)', fmtOpt(sum(sent, e => e.amountOpt)) + ' OPT', `${fmtUsd(sum(sent, value))} when sent · ${sent.length.toLocaleString('en-US')} transfers`) +
                                     tile('Exchanges', `${fmtOpt(sum(ex.filter(e => e.direction === 'out'), e => e.amountOpt))} sent · ${fmtOpt(sum(ex.filter(e => e.direction === 'in'), e => e.amountOpt))} received`,
                                         ex.length ? esc(exNames.join(', ')) : 'Add exchange addresses on <a href=""/page/my-wallets"">My Wallets</a>') +
                                     tile('Gifts &amp; loans sent', `${fmtOpt(sum(gifted, g => g.qty))} gifted · ${fmtOpt(sum(lent, g => g.qty))} lent`,
                                         gl.length ? `${gl.length.toLocaleString('en-US')} sends with gift/loan memo · cost basis ${fmtUsd(sum(gl, g => g.cost))}; not sales` : 'Sends whose memo says gift or loan') +
+                                    tile('Loans repaid (left out)', `${fmtOpt(sum(repaidLoans, e => e.repaidOpt))} OPT`,
+                                        repaidLoans.length
+                                            ? `${repaidLoans.length.toLocaleString('en-US')} loan(s), ${repayments.length.toLocaleString('en-US')} repayment(s); not purchases, sales or gifts`
+                                            : 'Loans (memo) later returned by the same address') +
                                     tile('Between my wallets', `${fmtOpt(sum(ownIn, e => e.amountOpt))} in · ${fmtOpt(sum(ownOut, e => e.amountOpt))} out`,
                                         own.length ? `${own.length.toLocaleString('en-US')} transfers, not counted as purchases or sales` : 'Add your wallets on <a href=""/page/my-wallets"">My Wallets</a>') +
                                     tile('Realized gains', fmtSigned(gains), `${yearLabel}`) +
@@ -4645,18 +4784,29 @@ public static class WebDashboard
                                 }).join('');
                             };
 
+                            const transferType = (e) => {
+                                const repaidNote = e.repaidOpt > EPS
+                                    ? (fullyRepaid(e) ? ' · repaid, left out' : ` · ${fmtOpt(e.repaidOpt)} OPT repaid, left out`)
+                                    : '';
+                                if (e.loanRepayment) return `<strong>Loan repayment</strong>${fullyRepaid(e) ? ', left out' : ` · ${fmtOpt(netOpt(e))} OPT above the loan counts as a purchase`}`;
+                                if (memoKind(e)) return `<strong>${KIND_LABEL[memoKind(e)]}</strong>${repaidNote}`;
+                                return exchangeLabel(e) || CATEGORY[e.category] || e.category;
+                            };
+                            const transferTypeText = (e) => e.loanRepayment ? 'Loan repayment' : memoKind(e) ? KIND_LABEL[memoKind(e)] : CATEGORY[e.category] || e.category;
+
                             const renderTransfers = () => {
-                                const rows = loaded.data.entries.filter(e => e.category !== 'distribution' && inYear(e.timeUtc)).slice().reverse();
+                                const rows = loaded.data.entries.filter(e => e.category !== 'distribution' && inYear(e.timeUtc) && (showRepaid.checked || !fullyRepaid(e))).slice().reverse();
                                 const body = $('pnl-transfers-body');
                                 body.innerHTML = rows.length === 0
                                     ? `<tr><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No receipts or sends outside node distributions${yearSelect.value ? ' in ' + yearSelect.value : ''}</td></tr>`
                                     : rows.map(e => {
                                         const own = e.category === 'wallet' && excluded.has(e.counterparty);
-                                        return `<tr style=""${own ? 'background: var(--surface-light);' : ''}"">
+                                        const repaid = fullyRepaid(e);
+                                        return `<tr style=""${own || repaid ? 'background: var(--surface-light);' : ''}${repaid ? ' color: var(--text-secondary);' : ''}"">
                                             <td>${fmtTime(e.timeUtc)}</td>
                                             <td>${e.direction === 'in' ? 'Received' : 'Sent'}</td>
                                             <td class=""address-cell"" title=""${esc(e.counterparty)}"">${esc(short(e.counterparty))}</td>
-                                            <td>${own ? `<strong>My wallet</strong> · ${esc(ownLabel(e.counterparty))}` : memoKind(e) ? `<strong>${KIND_LABEL[memoKind(e)]}</strong>` : exchangeLabel(e) || CATEGORY[e.category] || e.category}</td>
+                                            <td>${own ? `<strong>My wallet</strong> · ${esc(ownLabel(e.counterparty))}` : transferType(e)}</td>
                                             <td class=""amount-cell"">${fmtOpt(e.amountOpt)}</td>
                                             <td class=""amount-cell"">${fmtPrice(e.priceUsd)}</td>
                                             <td class=""amount-cell"">${e.priceUsd != null ? fmtUsd(e.amountOpt * e.priceUsd) : '-'}</td>
@@ -4692,7 +4842,7 @@ public static class WebDashboard
                                 const d = loaded.data;
                                 const notes = [
                                     'How this works: node distributions and staking rewards are counted as acquired at the market price when received; receipts from other wallets and exchanges are treated as purchases at the market price at that time; each send to another wallet or an exchange is treated as a sale at the market price at that time and matched to the oldest unsold tokens first. For exchanges, the actual trade may have happened later at a different price.',
-                                    `Prices are ${esc(d.priceSource)} hourly closes, not the price you actually traded at on an exchange. Wallets saved on My Wallets (or ticked above) are treated as yours, so transfers between them aren't counted. Sends whose memo contains gift or loan are treated as gifts or loans: they use up the oldest tokens but are not sales. Long-term = held more than 365 days. This is an estimate, not tax advice.`
+                                    `Prices are ${esc(d.priceSource)} hourly closes, not the price you actually traded at on an exchange. Wallets saved on My Wallets (or ticked above) are treated as yours, so transfers between them aren't counted. Sends whose memo contains gift or loan are treated as gifts or loans: they use up the oldest tokens but are not sales. A loan that the same address later paid back is left out entirely, both the loan and the repayment (any amount received beyond the loan counts as a normal receipt); a loan returned from a different address isn't recognised. Long-term = held more than 365 days. This is an estimate, not tax advice.`
                                 ];
                                 if (view.feeOpt > 0) notes.push(`Network fees (${fmtOpt(view.feeOpt)} OPT) reduce holdings but aren't counted as sales.`);
                                 const unknown = view.sales.reduce((s, x) => s + x.unknownQty, 0);
@@ -4753,11 +4903,11 @@ public static class WebDashboard
                             $('pnl-transfers-csv').addEventListener('click', (e) => {
                                 e.preventDefault();
                                 if (!loaded) return;
-                                const rows = loaded.data.entries.filter(x => x.category !== 'distribution' && inYear(x.timeUtc)).map(x => [
-                                    fmtTime(x.timeUtc), x.height, x.txHash, x.direction === 'in' ? 'received' : 'sent', x.counterparty, memoKind(x) ? KIND_LABEL[memoKind(x)] : CATEGORY[x.category] || x.category,
-                                    excluded.has(x.counterparty) ? 'yes' : '', exchangeOf(x.counterparty)?.n || '', x.amountOpt, x.priceUsd, x.priceUsd != null ? x.amountOpt * x.priceUsd : '', x.memo]);
+                                const rows = loaded.data.entries.filter(x => x.category !== 'distribution' && inYear(x.timeUtc) && (showRepaid.checked || !fullyRepaid(x))).map(x => [
+                                    fmtTime(x.timeUtc), x.height, x.txHash, x.direction === 'in' ? 'received' : 'sent', x.counterparty, transferTypeText(x),
+                                    excluded.has(x.counterparty) ? 'yes' : '', exchangeOf(x.counterparty)?.n || '', x.amountOpt, x.repaidOpt || 0, x.priceUsd, x.priceUsd != null ? x.amountOpt * x.priceUsd : '', x.memo]);
                                 downloadCsv(`pnl-transfers-${suffix()}.csv`,
-                                    ['time_utc', 'height', 'tx_hash', 'direction', 'counterparty', 'type', 'my_wallet', 'exchange', 'amount_opt', 'price_usd', 'value_usd', 'memo'], rows);
+                                    ['time_utc', 'height', 'tx_hash', 'direction', 'counterparty', 'type', 'my_wallet', 'exchange', 'amount_opt', 'loan_repaid_opt', 'price_usd', 'value_usd', 'memo'], rows);
                             });
 
                             $('pnl-sales-body').addEventListener('click', (e) => {
@@ -4778,6 +4928,7 @@ public static class WebDashboard
                             });
 
                             lossesOnly.addEventListener('change', renderSales);
+                            showRepaid.addEventListener('change', renderTransfers);
                             includeDist.addEventListener('change', () => {
                                 try { localStorage.setItem('optic-pnl-include-dist', includeDist.checked ? '1' : '0'); } catch (e) { }
                                 expanded.clear();
@@ -6849,6 +7000,10 @@ sealed class AddressDistributionRow
     public decimal? ValueUsd => PriceUsd.HasValue ? AmountOpt * PriceUsd.Value : null;
     public string? PriceInterval { get; set; }
     public DateTime? PriceCandleOpenUtc { get; set; }
+    /// <summary>"node" or "staking" (staking / participation reward).</summary>
+    public string Kind { get; set; } = "node";
+    /// <summary>True when the day had no clear large/small pair and the kind was guessed from nearby days.</summary>
+    public bool KindInferred { get; set; }
 }
 
 sealed class AddressDistributionReport
