@@ -25,3 +25,14 @@ OPTIC/odata/optic.db
 # logs
 *.log
 OPTIC/wallet-balances.csv
+
+# cached market data
+OPTIC/odata/*.json
+OPTIC/odata/*.tmp
+OPTIC/odata/evidence/
+OPTIC/odata/tax-labels/
+
+OPTIC/odata/auth/
+OPTIC/odata/users/
+OPTIC/odata/system/
+OPTIC/odata/_old-tax-labels-moved-to-users/

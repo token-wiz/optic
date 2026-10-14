@@ -22,6 +22,7 @@ public static class TokenPriceService
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly Dictionary<long, decimal> Hourly = new();
     private static readonly Dictionary<long, decimal> Daily = new();
+    private static readonly Dictionary<long, decimal> DailyVolumeUsd = new();
     private static readonly Dictionary<long, DateTimeOffset> HourlyChunksFetched = new();
     private static DateTimeOffset _dailyLoadedAt;
     private static long? _dataStartUnix;
@@ -90,6 +91,23 @@ public static class TokenPriceService
         }
     }
 
+    /// <summary>Every daily candle CMC has for OPT with its all-exchange USD volume, oldest first.</summary>
+    public static async Task<List<(DateTime DateUtc, decimal CloseUsd, decimal? VolumeUsd)>> GetDailyCandlesAsync(CancellationToken ct)
+    {
+        await Gate.WaitAsync(ct);
+        try
+        {
+            await EnsureDailyAsync(ct);
+            return Daily.OrderBy(kv => kv.Key)
+                .Select(kv => (FromUnix(kv.Key), kv.Value, DailyVolumeUsd.TryGetValue(kv.Key, out var v) ? v : (decimal?)null))
+                .ToList();
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
     private static async Task EnsureDailyAsync(CancellationToken ct)
     {
         if (Daily.Count > 0 && DateTimeOffset.UtcNow - _dailyLoadedAt < TimeSpan.FromHours(6))
@@ -103,8 +121,12 @@ public static class TokenPriceService
             if (quotes is null || quotes.Count == 0)
                 break;
 
-            foreach (var (openUnix, close) in quotes)
+            foreach (var (openUnix, close, volume) in quotes)
+            {
                 Daily[openUnix] = close;
+                if (volume.HasValue)
+                    DailyVolumeUsd[openUnix] = volume.Value;
+            }
 
             var earliest = quotes.Min(q => q.OpenUnix);
             if (earliest >= end)
@@ -147,14 +169,14 @@ public static class TokenPriceService
             if (quotes is null)
                 continue; // Leave unmarked so a later request retries.
 
-            foreach (var (openUnix, close) in quotes)
+            foreach (var (openUnix, close, _) in quotes)
                 Hourly[openUnix] = close;
 
             HourlyChunksFetched[chunk] = now;
         }
     }
 
-    private static async Task<List<(long OpenUnix, decimal Close)>?> FetchQuotesAsync(
+    private static async Task<List<(long OpenUnix, decimal Close, decimal? VolumeUsd)>?> FetchQuotesAsync(
         long timeStart,
         long timeEnd,
         string interval,
@@ -198,9 +220,9 @@ public static class TokenPriceService
         return null;
     }
 
-    private static List<(long OpenUnix, decimal Close)> ParseQuotes(JsonElement root)
+    private static List<(long OpenUnix, decimal Close, decimal? VolumeUsd)> ParseQuotes(JsonElement root)
     {
-        var output = new List<(long, decimal)>();
+        var output = new List<(long, decimal, decimal?)>();
         if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object ||
             !data.TryGetProperty("quotes", out var quotes) || quotes.ValueKind != JsonValueKind.Array)
             return output;
@@ -217,7 +239,12 @@ public static class TokenPriceService
                 !closeEl.TryGetDecimal(out var close))
                 continue;
 
-            output.Add((open.ToUnixTimeSeconds(), close));
+            decimal? volume = quote.TryGetProperty("volume", out var volumeEl) &&
+                              volumeEl.ValueKind == JsonValueKind.Number &&
+                              volumeEl.TryGetDecimal(out var v)
+                ? v
+                : null;
+            output.Add((open.ToUnixTimeSeconds(), close, volume));
         }
 
         return output;
