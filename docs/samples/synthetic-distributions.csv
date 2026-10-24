@@ -1,0 +1,3 @@
+effective_from,effective_to,category,scheduled_opt_per_day,observed_opt_per_day,user_assumed_opt_per_day,minted_opt,burned_opt,reserve_release_opt,unlock_opt,reward_epoch,payment_utc,verification,evidence_url,evidence_note,notes,emitted_opt_per_day,emission_verification
+2025-03-01,2025-03-31,combined,,,,,,,,,,unverified,,User statement: 60M OPT/day emitted,SYNTHETIC SAMPLE,60000000,userreported
+2025-03-01,2025-03-31,node,,,35000000,,,,,,,userreported,,User estimate of node payouts,SYNTHETIC SAMPLE,,

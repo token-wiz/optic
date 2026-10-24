@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Numerics;
@@ -21,10 +21,21 @@ if (ParseHelpArg(args))
     return;
 }
 
+if (args.Length >= 1 && (string.Equals(args[0], "--add-user", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--remove-user", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--list-users", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--unblock-ip", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--list-blocked-ips", StringComparison.OrdinalIgnoreCase)))
+{
+    Environment.ExitCode = OPTIC.Services.DashboardAuthCli.Run(args);
+    return;
+}
+
 if (ParseWebArg(args))
 {
-    var webPort = ParseWebPortArg(args) ?? 80;
+    // Command-line options win; otherwise webHost= / webPort= from optic.conf (set on the Admin page).
+    var webConfig = WebDashboard.LoadDashboardConfig();
+    var webPort = ParseWebPortArg(args)
+        ?? (int.TryParse(webConfig.GetValueOrDefault("webPort"), out var confPort) && confPort is >= 0 and < 65536 ? confPort : 80);
     var webHost = ParseWebHostArg(args);
+    if (string.IsNullOrWhiteSpace(webHost))
+        webHost = webConfig.GetValueOrDefault("webHost");
     if (string.IsNullOrWhiteSpace(webHost))
         webHost = "127.0.0.1";
 
@@ -2905,9 +2916,14 @@ static void PrintHelp()
     Console.WriteLine("  --web | web | --web-server");
     Console.WriteLine("      Start the local web dashboard.");
     Console.WriteLine("  --web-host <host>");
-    Console.WriteLine("      Bind host for web dashboard (default: 127.0.0.1).");
+    Console.WriteLine("      Bind host for web dashboard (default: webHost= in optic.conf, else 127.0.0.1).");
+    Console.WriteLine("  --add-user <username> [--admin]");
+    Console.WriteLine("      Add a dashboard sign-in, or change its password (asks for the password).");
+    Console.WriteLine("      --admin lets the user open the Admin page; the first user is always an admin.");
+    Console.WriteLine("  --remove-user <username> | --list-users");
+    Console.WriteLine("      Remove a dashboard sign-in, or list them.");
     Console.WriteLine("  --web-port <port>");
-    Console.WriteLine("      Bind port for web dashboard (default: 80).");
+    Console.WriteLine("      Bind port for web dashboard (default: webPort= in optic.conf, else 80; 0 turns plain HTTP off).");
     Console.WriteLine("  --distributions [addr] | --distributions=<addr> | distributions");
     Console.WriteLine("      Run the default balances summary + ledger output.");
     Console.WriteLine("      Optional addr overrides addr= in optic.conf.");
