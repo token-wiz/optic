@@ -36,3 +36,13 @@ OPTIC/odata/auth/
 OPTIC/odata/users/
 OPTIC/odata/system/
 OPTIC/odata/_old-tax-labels-moved-to-users/
+
+# liquidity review evidence archive (raw responses and imported files)
+OPTIC/odata/valuation-evidence/
+
+# local chain and wallet caches (personal addresses and history) and backups
+OPTIC/odata/evm/
+OPTIC/odata/osmosis/
+OPTIC/odata/sends.jsonl
+OPTIC/odata/sends-meta.json
+OPTIC/odata/*.backup-*

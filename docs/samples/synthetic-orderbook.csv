@@ -1,0 +1,4 @@
+venue,market,base_asset,quote_asset,observed_utc,side,price,quantity,truncated,taker_fee_rate
+SyntheticEx,OPT/USDT,optio:uOPT,USDT,2025-03-01T13:00:00Z,bid,0.0100,10000,true,0.002
+SyntheticEx,OPT/USDT,optio:uOPT,USDT,2025-03-01T13:00:00Z,bid,0.0090,5000,true,0.002
+SyntheticEx,OPT/USDT,optio:uOPT,USDT,2025-03-01T13:00:00Z,ask,0.0110,8000,true,0.002

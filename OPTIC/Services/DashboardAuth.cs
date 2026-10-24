@@ -17,13 +17,17 @@ namespace OPTIC.Services;
 public static class DashboardAuth
 {
     const string CookieName = "optic_session";
+    // Admin page, the System menu (node status, validators, data sync) and the retired Advanced pages.
+    static readonly HashSet<string> AdminPages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/page/admin", "/page/status", "/page/validators", "/page/sync", "/page/multisend", "/page/cmc", "/page/custom",
+    };
     const int Iterations = 210_000;
     static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(14);
+    // Five failed sign-ins in a row from one IP address block it until an admin unblocks it.
     const int MaxFailures = 5;
-    static readonly TimeSpan LockoutWindow = TimeSpan.FromMinutes(15);
 
     static readonly object FileLock = new();
-    static readonly ConcurrentDictionary<string, (int count, DateTime first)> Failures = new();
 
     sealed class UserRecord
     {
@@ -190,16 +194,154 @@ public static class DashboardAuth
 
     static string ClientKey(HttpContext ctx) => ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
 
-    static bool IsLockedOut(HttpContext ctx)
+    // ----- IP guard: failed sign-ins per IP address, and blocked addresses, kept in odata/auth/ip-guard.json.
+    // The OPTIC computer itself (loopback) is never blocked, so an admin can always reach the Admin page there.
+
+    public sealed class IpRecord
     {
-        if (!Failures.TryGetValue(ClientKey(ctx), out var f)) return false;
-        if (DateTime.UtcNow - f.first > LockoutWindow) { Failures.TryRemove(ClientKey(ctx), out _); return false; }
-        return f.count >= MaxFailures;
+        public int Failures { get; set; }
+        public DateTime? FirstFailureUtc { get; set; }
+        public DateTime? LastFailureUtc { get; set; }
+        public string? LastUser { get; set; }
+        public bool Blocked { get; set; }
+        public DateTime? BlockedUtc { get; set; }
     }
 
-    static void RecordFailure(HttpContext ctx) =>
-        Failures.AddOrUpdate(ClientKey(ctx), _ => (1, DateTime.UtcNow),
-            (_, f) => DateTime.UtcNow - f.first > LockoutWindow ? (1, DateTime.UtcNow) : (f.count + 1, f.first));
+    static string IpGuardPath => Path.Combine(AuthDir, "ip-guard.json");
+    static readonly object IpLock = new();
+    static Dictionary<string, IpRecord>? _ipGuard;
+
+    static Dictionary<string, IpRecord> IpGuard()
+    {
+        if (_ipGuard != null) return _ipGuard;
+        try { _ipGuard = File.Exists(IpGuardPath) ? JsonSerializer.Deserialize<Dictionary<string, IpRecord>>(File.ReadAllText(IpGuardPath)) : null; }
+        catch (JsonException) { _ipGuard = null; }
+        return _ipGuard ??= new Dictionary<string, IpRecord>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    static void SaveIpGuard()
+    {
+        Directory.CreateDirectory(AuthDir);
+        File.WriteAllText(IpGuardPath, JsonSerializer.Serialize(_ipGuard, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    static bool IsBlocked(HttpContext ctx)
+    {
+        if (IsLoopback(ctx)) return false;
+        lock (IpLock) return IpGuard().TryGetValue(ClientKey(ctx), out var r) && r.Blocked;
+    }
+
+    /// <summary>Counts a failed sign-in for the caller's IP; returns true when this failure blocks the address.</summary>
+    static bool RecordFailure(HttpContext ctx, string user)
+    {
+        if (IsLoopback(ctx)) return false;
+        lock (IpLock)
+        {
+            var g = IpGuard();
+            var ip = ClientKey(ctx);
+            if (!g.TryGetValue(ip, out var r)) g[ip] = r = new IpRecord();
+            r.Failures++;
+            r.FirstFailureUtc ??= DateTime.UtcNow;
+            r.LastFailureUtc = DateTime.UtcNow;
+            r.LastUser = user.Length > 60 ? user[..60] : user;
+            var justBlocked = !r.Blocked && r.Failures >= MaxFailures;
+            if (justBlocked) { r.Blocked = true; r.BlockedUtc = DateTime.UtcNow; }
+            SaveIpGuard();
+            return justBlocked;
+        }
+    }
+
+    static void ClearFailures(HttpContext ctx)
+    {
+        lock (IpLock)
+        {
+            if (IpGuard().Remove(ClientKey(ctx))) SaveIpGuard();
+        }
+    }
+
+    /// <summary>Addresses that are blocked or have failed sign-ins, most recent first.</summary>
+    public static List<(string Ip, IpRecord Record)> IpStatus()
+    {
+        lock (IpLock) return IpGuard().Select(kv => (kv.Key, kv.Value)).OrderByDescending(x => x.Value.Blocked).ThenByDescending(x => x.Value.LastFailureUtc).ToList();
+    }
+
+    /// <summary>Unblocks an address and clears its failed-attempt count. Recorded in the sign-in log.</summary>
+    public static bool UnblockIp(string ip, string by, HttpContext? ctx = null)
+    {
+        bool removed;
+        lock (IpLock)
+        {
+            removed = IpGuard().Remove(ip.Trim());
+            if (removed) SaveIpGuard();
+        }
+        if (removed) AppendLoginEvent(new LoginEvent(DateTime.UtcNow, by, "ip-unblocked", ip.Trim(), ctx?.Request.Headers.UserAgent.ToString()));
+        return removed;
+    }
+
+    // ----- sign-in log: one JSON line per event in odata/auth/login-log.jsonl (append-only; never holds passwords)
+
+    public sealed record LoginEvent(DateTime Utc, string User, string Result, string? Ip, string? UserAgent);
+
+    public const string UnknownUsersKey = "*unknown*";
+    static string LoginLogPath => Path.Combine(AuthDir, "login-log.jsonl");
+    static readonly object LoginLogLock = new();
+
+    static void LogLogin(HttpContext ctx, string user, string result)
+    {
+        var agent = ctx.Request.Headers.UserAgent.ToString();
+        AppendLoginEvent(new LoginEvent(DateTime.UtcNow, user.Length > 60 ? user[..60] : user, result, ClientKey(ctx), agent.Length > 300 ? agent[..300] : agent));
+    }
+
+    static void AppendLoginEvent(LoginEvent e)
+    {
+        try
+        {
+            lock (LoginLogLock)
+            {
+                Directory.CreateDirectory(AuthDir);
+                File.AppendAllText(LoginLogPath, JsonSerializer.Serialize(e) + "\n");
+            }
+        }
+        catch (IOException) { } // a full or locked disk must not stop sign-in
+    }
+
+    static List<LoginEvent> ReadLoginLog()
+    {
+        lock (LoginLogLock)
+        {
+            if (!File.Exists(LoginLogPath)) return new();
+            var list = new List<LoginEvent>();
+            foreach (var line in File.ReadLines(LoginLogPath))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                try { if (JsonSerializer.Deserialize<LoginEvent>(line) is { } e) list.Add(e); } catch (JsonException) { }
+            }
+            return list;
+        }
+    }
+
+    /// <summary>Sign-in events for one user (newest first), or for names that are not users when user is UnknownUsersKey.</summary>
+    public static List<LoginEvent> LoginHistory(string user, int max = 500)
+    {
+        var known = LoadUsers().Select(u => u.Username).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return ReadLoginLog()
+            .Where(e => user == UnknownUsersKey ? !known.Contains(e.User) : string.Equals(e.User, user, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(e => e.Utc).Take(max).ToList();
+    }
+
+    public sealed record LoginSummary(string User, DateTime? LastSignIn, string? LastSignInIp, int SignIns, int FailedLast30Days, DateTime? LastFailure);
+
+    /// <summary>Per user: last successful sign-in, total sign-ins, and failed attempts in the last 30 days.</summary>
+    public static Dictionary<string, LoginSummary> LoginSummaries()
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-30);
+        return ReadLoginLog().GroupBy(e => e.User, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g =>
+        {
+            var ok = g.Where(e => e.Result == "signed-in").OrderByDescending(e => e.Utc).FirstOrDefault();
+            var failed = g.Where(e => e.Result is "wrong-password" or "locked-out").ToList();
+            return new LoginSummary(g.Key, ok?.Utc, ok?.Ip, g.Count(e => e.Result == "signed-in"), failed.Count(e => e.Utc >= cutoff), failed.Count == 0 ? null : failed.Max(e => e.Utc));
+        }, StringComparer.OrdinalIgnoreCase);
+    }
 
     static string SafeReturnUrl(string? url) =>
         !string.IsNullOrEmpty(url) && url.StartsWith('/') && !url.StartsWith("//") && !url.StartsWith("/\\") ? url : "/";
@@ -220,6 +362,20 @@ public static class DashboardAuth
         app.Use(async (ctx, next) =>
         {
             var path = ctx.Request.Path.Value ?? "/";
+            // A blocked address gets nothing, not even the sign-in page, until an admin unblocks it.
+            if (IsBlocked(ctx) && !path.StartsWith("/images/"))
+            {
+                // Keep a record of sign-in attempts that arrive while the address is blocked.
+                if (path == "/login" && HttpMethods.IsPost(ctx.Request.Method) && ctx.Request.HasFormContentType)
+                {
+                    var f = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
+                    LogLogin(ctx, f["username"].ToString().Trim(), "blocked-attempt");
+                }
+                ctx.Response.StatusCode = 403;
+                if (path.StartsWith("/api/")) await ctx.Response.WriteAsJsonAsync(new { error = "This address is blocked after too many failed sign-ins. Ask an admin to unblock it." });
+                else { ctx.Response.ContentType = "text/html; charset=utf-8"; await ctx.Response.WriteAsync(LoginPage("/", "This address is blocked after too many failed sign-ins. Ask an admin to unblock it.")); }
+                return;
+            }
             if (path == "/login" || path == "/logout" || path.StartsWith("/images/"))
             {
                 await next();
@@ -237,7 +393,7 @@ public static class DashboardAuth
 
             if (CurrentUser(ctx) != null)
             {
-                if ((path == "/page/admin" || path.StartsWith("/api/admin/")) && !IsAdmin(ctx))
+                if ((AdminPages.Contains(path) || path.StartsWith("/api/admin/")) && !IsAdmin(ctx))
                 {
                     ctx.Response.StatusCode = 403;
                     if (path.StartsWith("/api/")) await ctx.Response.WriteAsJsonAsync(new { error = "Only an admin can do this." });
@@ -268,21 +424,28 @@ public static class DashboardAuth
         {
             var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
             var returnUrl = SafeReturnUrl(form["returnUrl"]);
-            if (IsLockedOut(ctx))
-                return Results.Content(LoginPage(returnUrl, "Too many failed attempts. Try again in 15 minutes."), "text/html; charset=utf-8", statusCode: 429);
-            var user = CheckPassword(form["username"].ToString(), form["password"].ToString());
+            var attempted = form["username"].ToString().Trim();
+            var known = LoadUsers().FirstOrDefault(u => string.Equals(u.Username, attempted, StringComparison.OrdinalIgnoreCase))?.Username;
+            var user = CheckPassword(attempted, form["password"].ToString());
             if (user == null)
             {
-                RecordFailure(ctx);
+                LogLogin(ctx, known ?? attempted, known is null ? "unknown-user" : "wrong-password");
+                if (RecordFailure(ctx, known ?? attempted))
+                {
+                    LogLogin(ctx, known ?? attempted, "ip-blocked");
+                    return Results.Content(LoginPage(returnUrl, "This address is blocked after too many failed sign-ins. Ask an admin to unblock it."), "text/html; charset=utf-8", statusCode: 403);
+                }
                 return Results.Content(LoginPage(returnUrl, "Wrong username or password."), "text/html; charset=utf-8", statusCode: 401);
             }
-            Failures.TryRemove(ClientKey(ctx), out _);
+            ClearFailures(ctx);
             SetCookie(ctx, CreateSessionCookie(user), DateTimeOffset.UtcNow.Add(SessionLifetime));
+            LogLogin(ctx, user, "signed-in");
             return Results.Redirect(returnUrl);
         });
 
         app.MapGet("/logout", (HttpContext ctx) =>
         {
+            if (CurrentUser(ctx) is { } who) LogLogin(ctx, who, "signed-out");
             SetCookie(ctx, "", DateTimeOffset.UnixEpoch);
             return Results.Redirect("/login");
         });
@@ -337,6 +500,20 @@ public static class DashboardAuthCli
     public static int Run(string[] args)
     {
         var cmd = args[0].ToLowerInvariant();
+        if (cmd == "--list-blocked-ips")
+        {
+            var rows = DashboardAuth.IpStatus();
+            Console.WriteLine(rows.Count == 0 ? "No blocked addresses or failed sign-ins." : string.Join(Environment.NewLine, rows.Select(r =>
+                $"{r.Ip}  {(r.Record.Blocked ? "BLOCKED since " + r.Record.BlockedUtc?.ToString("yyyy-MM-dd HH:mm") + " UTC" : "not blocked")}  {r.Record.Failures} failed  last tried: {r.Record.LastUser}")));
+            return 0;
+        }
+        if (cmd == "--unblock-ip")
+        {
+            if (args.Length < 2) { Console.Error.WriteLine("Usage: OPTIC --unblock-ip <ip address>"); return 1; }
+            var ok = DashboardAuth.UnblockIp(args[1], "command line");
+            Console.WriteLine(ok ? $"Unblocked {args[1]}." : $"{args[1]} was not blocked.");
+            return ok ? 0 : 1;
+        }
         if (cmd == "--list-users")
         {
             var users = DashboardAuth.GetUsers();

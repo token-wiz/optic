@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Numerics;
@@ -21,7 +21,7 @@ if (ParseHelpArg(args))
     return;
 }
 
-if (args.Length >= 1 && (string.Equals(args[0], "--add-user", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--remove-user", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--list-users", StringComparison.OrdinalIgnoreCase)))
+if (args.Length >= 1 && (string.Equals(args[0], "--add-user", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--remove-user", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--list-users", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--unblock-ip", StringComparison.OrdinalIgnoreCase) || string.Equals(args[0], "--list-blocked-ips", StringComparison.OrdinalIgnoreCase)))
 {
     Environment.ExitCode = OPTIC.Services.DashboardAuthCli.Run(args);
     return;
@@ -32,7 +32,7 @@ if (ParseWebArg(args))
     // Command-line options win; otherwise webHost= / webPort= from optic.conf (set on the Admin page).
     var webConfig = WebDashboard.LoadDashboardConfig();
     var webPort = ParseWebPortArg(args)
-        ?? (int.TryParse(webConfig.GetValueOrDefault("webPort"), out var confPort) && confPort is > 0 and < 65536 ? confPort : 80);
+        ?? (int.TryParse(webConfig.GetValueOrDefault("webPort"), out var confPort) && confPort is >= 0 and < 65536 ? confPort : 80);
     var webHost = ParseWebHostArg(args);
     if (string.IsNullOrWhiteSpace(webHost))
         webHost = webConfig.GetValueOrDefault("webHost");
@@ -2923,7 +2923,7 @@ static void PrintHelp()
     Console.WriteLine("  --remove-user <username> | --list-users");
     Console.WriteLine("      Remove a dashboard sign-in, or list them.");
     Console.WriteLine("  --web-port <port>");
-    Console.WriteLine("      Bind port for web dashboard (default: webPort= in optic.conf, else 80).");
+    Console.WriteLine("      Bind port for web dashboard (default: webPort= in optic.conf, else 80; 0 turns plain HTTP off).");
     Console.WriteLine("  --distributions [addr] | --distributions=<addr> | distributions");
     Console.WriteLine("      Run the default balances summary + ledger output.");
     Console.WriteLine("      Optional addr overrides addr= in optic.conf.");

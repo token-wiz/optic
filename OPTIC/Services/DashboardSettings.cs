@@ -41,7 +41,7 @@ public static class DashboardSettings
         ("pageLimit", "Page size", v => PositiveInt(v)),
         ("maxPages", "Max pages", v => PositiveInt(v)),
         ("webHost", "Dashboard listens on", v => v == "0.0.0.0" || v == "127.0.0.1" || v == "localhost" || System.Net.IPAddress.TryParse(v, out _) ? null : "0.0.0.0 (all networks), 127.0.0.1 (this computer only) or an IP address"),
-        ("webPort", "Dashboard port", v => int.TryParse(v, out var n) && n is > 0 and < 65536 ? null : "1 to 65535"),
+        ("webPort", "HTTP port", v => int.TryParse(v, out var n) && n is >= 0 and < 65536 ? null : "0 (off) to 65535"),
         ("httpsPort", "HTTPS port", v => int.TryParse(v, out var n) && n is >= 0 and < 65536 ? null : "0 (off) to 65535"),
         ("httpsRedirect", "Send other devices to HTTPS", v => v is "true" or "false" ? null : "true or false"),
     };
@@ -66,6 +66,10 @@ public static class DashboardSettings
     static string WalletsPath(HttpContext ctx) => Path.Combine(DashboardAuth.UserDataDir(ctx), "wallets.json");
     static string UserSettingsPath(HttpContext ctx) => Path.Combine(DashboardAuth.UserDataDir(ctx), "settings.json");
 
+    static readonly System.Text.RegularExpressions.Regex OsmoAddressPattern = new("^osmo1[02-9ac-hj-np-z]{38,58}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    // Ethereum-style addresses (one address per key on Ethereum, Base and Arbitrum); saved for reference, not read by the tax report.
+    static readonly System.Text.RegularExpressions.Regex EvmAddressPattern = new("^0x[0-9a-f]{40}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     static List<Wallet> CleanWallets(IEnumerable<Wallet?> items)
     {
         var seen = new HashSet<string>();
@@ -73,11 +77,13 @@ public static class DashboardSettings
         foreach (var w in items)
         {
             var a = (w?.a ?? "").Trim().ToLowerInvariant();
-            if (!AddressPattern.IsMatch(a) || !seen.Add(a)) continue;
+            if (!(AddressPattern.IsMatch(a) || OsmoAddressPattern.IsMatch(a) || EvmAddressPattern.IsMatch(a)) || !seen.Add(a)) continue;
             var l = (w!.l ?? "").Trim();
             clean.Add(new Wallet(a, l.Length > 40 ? l[..40] : l, w.p));
         }
-        var primary = Math.Max(0, clean.FindIndex(w => w.p));
+        // The primary wallet is always an Optio wallet; Osmosis accounts are extra wallets for the tax report.
+        var primary = clean.FindIndex(w => w.p && AddressPattern.IsMatch(w.a));
+        if (primary < 0) primary = clean.FindIndex(w => AddressPattern.IsMatch(w.a));
         return clean.Select((w, i) => w with { p = i == primary }).ToList();
     }
 
@@ -253,12 +259,46 @@ window.opticPrefs = window.opticPrefs || {
         app.MapGet("/api/admin/users", (HttpContext ctx) =>
         {
             var me = DashboardAuth.CurrentUser(ctx);
-            return Results.Json(DashboardAuth.GetUsers().Select(u => new
+            var logins = DashboardAuth.LoginSummaries();
+            return Results.Json(DashboardAuth.GetUsers().Select(u =>
             {
-                username = u.Username,
-                isAdmin = u.IsAdmin,
-                isYou = string.Equals(u.Username, me, StringComparison.OrdinalIgnoreCase),
+                logins.TryGetValue(u.Username, out var l);
+                return new
+                {
+                    username = u.Username,
+                    isAdmin = u.IsAdmin,
+                    isYou = string.Equals(u.Username, me, StringComparison.OrdinalIgnoreCase),
+                    lastSignIn = l?.LastSignIn,
+                    lastSignInIp = l?.LastSignInIp,
+                    signIns = l?.SignIns ?? 0,
+                    failedLast30Days = l?.FailedLast30Days ?? 0,
+                };
             }));
+        });
+
+        // Sign-in history for one user (newest first), or for names that are not users ("*unknown*").
+        app.MapGet("/api/admin/login-log", (HttpContext ctx) =>
+        {
+            var user = ctx.Request.Query["user"].ToString().Trim();
+            if (user.Length == 0) return Results.Json(new { error = "Choose a user." }, statusCode: 400);
+            return Results.Json(DashboardAuth.LoginHistory(user).Select(e => new { utc = e.Utc, user = e.User, result = e.Result, ip = e.Ip, userAgent = e.UserAgent }));
+        });
+
+        // Addresses blocked after five failed sign-ins, and addresses with failed sign-ins so far.
+        app.MapGet("/api/admin/blocked-ips", () =>
+            Results.Json(DashboardAuth.IpStatus().Select(x => new
+            {
+                ip = x.Ip, blocked = x.Record.Blocked, blockedUtc = x.Record.BlockedUtc, failures = x.Record.Failures,
+                firstFailureUtc = x.Record.FirstFailureUtc, lastFailureUtc = x.Record.LastFailureUtc, lastUser = x.Record.LastUser,
+            })));
+
+        app.MapPost("/api/admin/blocked-ips/unblock", async (HttpContext ctx) =>
+        {
+            var body = await JsonSerializer.DeserializeAsync<JsonElement>(ctx.Request.Body, cancellationToken: ctx.RequestAborted);
+            var ip = body.TryGetProperty("ip", out var v) ? v.GetString() ?? "" : "";
+            if (ip.Trim().Length == 0) return Results.Json(new { error = "Give the address to unblock." }, statusCode: 400);
+            var ok = DashboardAuth.UnblockIp(ip, DashboardAuth.UserName(ctx), ctx);
+            return ok ? Results.Json(new { unblocked = ip.Trim() }) : Results.Json(new { error = "That address is not on the list." }, statusCode: 404);
         });
 
         app.MapPost("/api/admin/users", async (HttpContext ctx) =>
@@ -333,7 +373,8 @@ window.opticPrefs = window.opticPrefs || {
                     .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork)
                     .Select(a => new { adapter = n.Name, ip = a.Address.ToString() }))
                 .ToList();
-            var portPart = port == 80 ? "" : ":" + port;
+            var httpPort = DashboardHttps.HttpPort;
+            var portPart = httpPort == 80 ? "" : ":" + httpPort;
             var allNetworks = host == "0.0.0.0" || host == "*" || host == "+";
             var dbPath = Path.Combine(Environment.CurrentDirectory, "odata", "optic.db");
             return Results.Json(new
@@ -341,7 +382,10 @@ window.opticPrefs = window.opticPrefs || {
                 host,
                 port,
                 allNetworks,
-                urls = allNetworks
+                httpPort,
+                urls = httpPort == 0 ? new List<string>()
+                    : allNetworks && port == 0 ? new List<string> { $"http://127.0.0.1{portPart}/" }
+                    : allNetworks
                     ? addresses.Select(a => $"http://{a.ip}{portPart}/").Prepend($"http://127.0.0.1{portPart}/").ToList()
                     : new List<string> { $"http://{host}{portPart}/" },
                 httpsPort = DashboardHttps.Current.Enabled ? DashboardHttps.Current.Port : (int?)null,

@@ -29,6 +29,9 @@ public static class DashboardHttps
 
     static X509Certificate2? _certificate;
 
+    /// <summary>The plain-HTTP port actually listening; 0 when HTTP is off.</summary>
+    public static int HttpPort { get; private set; }
+
     static IPAddress BindAddress(string host) =>
         host is "0.0.0.0" or "*" or "+" ? IPAddress.Any
         : host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ? IPAddress.Loopback
@@ -58,7 +61,7 @@ public static class DashboardHttps
 
         if (httpsPort <= 0 || httpsPort > 65535)
             Current = new(false, 0, false, "Turned off (httpsPort=0).", null, null, null, null, null);
-        else if (httpsPort == port)
+        else if (httpsPort == port && port > 0)
             Current = new(false, httpsPort, false, $"Port {httpsPort} is already the HTTP port.", null, null, null, null, null);
         else if (!PortFree(address, httpsPort))
             Current = new(false, httpsPort, false, $"Port {httpsPort} is already used by another program.", null, null, null, null, null);
@@ -77,9 +80,20 @@ public static class DashboardHttps
             }
         }
 
+        // webPort=0 turns plain HTTP off. If HTTPS could not start either, keep HTTP on this computer only so the dashboard stays reachable.
+        var httpAddress = address;
+        HttpPort = port;
+        if (port == 0 && !Current.Enabled)
+        {
+            httpAddress = IPAddress.Loopback;
+            HttpPort = 80;
+            Console.WriteLine("Plain HTTP is turned off but HTTPS could not start, so http://127.0.0.1/ stays open on this computer only.");
+        }
+
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Listen(address, port);
+            if (HttpPort > 0)
+                options.Listen(httpAddress, HttpPort);
             if (Current.Enabled)
                 options.Listen(address, Current.Port, listen => listen.UseHttps(_certificate!));
         });
@@ -172,6 +186,7 @@ public static class DashboardHttps
         app.MapGet("/api/admin/https", () => Results.Json(new
         {
             current = Current,
+            httpPort = HttpPort,
             uploaded = File.Exists(UploadedPfxPath),
             note = "Certificate and port changes take effect the next time OPTIC starts.",
         }));

@@ -1,0 +1,4 @@
+wallet,timestamp_utc,tx_hash,event_index,category,classification,quantity_base_units,denom,decimals,sender,reference_unit_price_usd,price_provider,price_endpoint,price_field,price_interval,price_observed_utc,price_fallback
+optio1syntheticsyntheticsyntheticsyntheticsyn,2025-03-01T14:05:00Z,SYNTHETIC0001,12,node,inferred,35000000000,uOPT,6,,0.01,SYNTHETIC,,quote.close,1h,2025-03-01T14:00:00Z,
+optio1syntheticsyntheticsyntheticsyntheticsyn,2025-03-01T14:05:00Z,SYNTHETIC0001,13,staking,inferred,1200000000,uOPT,6,,0.01,SYNTHETIC,,quote.close,1h,2025-03-01T14:00:00Z,
+optio1syntheticsyntheticsyntheticsyntheticsyn,2025-03-02T14:10:00Z,,,node,uncertain,34000000000,uOPT,6,,,,,,,,
