@@ -80,6 +80,22 @@ public static partial class WebDashboard
             try { return VJson(await BuildTitnLotsAsync(wallets, labels, ctx.Request.Query["refresh"] == "1", ctx.RequestAborted)); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not build your TGT / TITN / ETH lots: " + ex.Message, 502); }
         });
+        // Your choice of TGT→TITN migration treatment, kept with your per-transaction answers.
+        app.MapPost("/api/titn/settings", async (HttpContext ctx) =>
+        {
+            var body = await JsonNode.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted) as JsonObject;
+            var migration = body?["migration"]?.ToString();
+            if (migration is not ("exchange" or "carryover")) return VError("migration must be exchange or carryover.");
+            var labelsPath = Path.Combine(DashboardAuth.UserDataDir(ctx), "titn-labels.json");
+            var labels = File.Exists(labelsPath) ? JsonNode.Parse(await File.ReadAllTextAsync(labelsPath, ctx.RequestAborted)) as JsonObject ?? new() : new JsonObject();
+            var settings = labels["_settings"] as JsonObject ?? new JsonObject();
+            settings["migration"] = migration;
+            settings["migrationSetUtc"] = DateTime.UtcNow;
+            labels["_settings"] = settings;
+            Directory.CreateDirectory(Path.GetDirectoryName(labelsPath)!);
+            await File.WriteAllTextAsync(labelsPath, labels.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), ctx.RequestAborted);
+            return VJson(new { migration });
+        });
     }
 
     sealed record EvmTx(DateTime Time, string Hash, string From, string To, decimal Value, string Method, decimal Fee);
@@ -331,7 +347,10 @@ public static partial class WebDashboard
             var movedToExchange = new List<object>();
             var notes = new List<string>();
             var lotSeq = 0;
-            var receivable = new Dictionary<string, Queue<(decimal Titn, decimal Usd, DateTime Time)>>();
+            var receivable = new Dictionary<string, Queue<(decimal Titn, decimal Usd, DateTime Time, DateTime? Acq)>>();
+            // TGT→TITN migration treatment (your choice on the Tax Report): a taxable exchange at TGT's value (default), or
+            // not taxable, with the TGT's cost and purchase dates carried over to the TITN.
+            var carryOver = (labels["_settings"] as JsonObject)?["migration"]?.ToString() == "carryover";
             var lp = wallets.ToDictionary(w => w.Address, _ => (Titn: 0m, Usd: 0m, Fee: 0m));
             var lastLpWithdrawal = rows.Where(r => r.Legs.TryGetValue("TITN", out var l) && l.Qty > 0 && l.Counterparties.Contains(AerodromeTitnPool))
                 .GroupBy(r => r.Wallet).ToDictionary(g => g.Key, g => g.Max(r => r.Time));
@@ -458,11 +477,19 @@ public static partial class WebDashboard
                     if (cps.Contains(MergeTgtContract))
                     {
                         if (!receivable.TryGetValue(r.Wallet, out var queue)) receivable[r.Wallet] = queue = new();
-                        if (!inbound && asset == "TGT")
+                        if (!inbound && asset == "TGT" && carryOver)
+                        {
+                            // Not a sale: the TGT lots (cost and purchase date) become the TITN this deposit entitles you to.
+                            if (mergeClaims.TryGetValue(r.Tx, out var titnOutC))
+                                foreach (var (lot, q) in Take(r.Wallet, "TGT", qty))
+                                    queue.Enqueue((titnOutC * q / qty, (lot.UnitCost ?? 0m) * q + feeUsd * q / qty, r.Time, lot.Acquired == DateTime.MinValue ? null : lot.Acquired));
+                            else notes.Add($"Could not read the TITN claim for the migration deposit {r.Tx}.");
+                        }
+                        else if (!inbound && asset == "TGT")
                         {
                             var fmv = Px(tgtPx, r.Time) is { } tp ? qty * tp : (decimal?)null;
                             Dispose(r.Wallet, r.Chain, "TGT", qty, fmv - halfFee, r.Time, r.Tx, "Exchanged for TITN in the TGT→TITN migration (MergeTgt), at TGT's value that day" + (halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : ""));
-                            if (mergeClaims.TryGetValue(r.Tx, out var titnOut)) queue.Enqueue((titnOut, (fmv ?? 0m) + halfFee, r.Time));
+                            if (mergeClaims.TryGetValue(r.Tx, out var titnOut)) queue.Enqueue((titnOut, (fmv ?? 0m) + halfFee, r.Time, null));
                             else notes.Add($"Could not read the TITN claim for the migration deposit {r.Tx}.");
                         }
                         else if (inbound && asset == "TITN")
@@ -471,14 +498,21 @@ public static partial class WebDashboard
                             var claimFee = feeUsd; // the claim's fee is part of what the TITN cost
                             while (left > 0.000001m && queue.Count > 0)
                             {
-                                var (t, u, dt) = queue.Peek();
+                                var (t, u, dt, acq) = queue.Peek();
                                 var q = Math.Min(t, left);
-                                Acquire(r.Wallet, "TITN", q, (t > 0 ? u * q / t : 0) + claimFee * q / qty, r.Time, $"From the TGT→TITN migration (TGT deposited {dt:yyyy-MM-dd})");
+                                // Carry-over: the TITN keeps the TGT's purchase date (holding period); otherwise it starts on receipt.
+                                Acquire(r.Wallet, "TITN", q, (t > 0 ? u * q / t : 0) + claimFee * q / qty, acq ?? r.Time,
+                                    carryOver ? $"From the TGT→TITN migration, TGT cost carried over (TGT deposited {dt:yyyy-MM-dd})" : $"From the TGT→TITN migration (TGT deposited {dt:yyyy-MM-dd})");
                                 left -= q;
                                 queue.Dequeue();
-                                if (q < t - 0.000001m) { queue = new Queue<(decimal, decimal, DateTime)>(new[] { (t - q, u * (t - q) / t, dt) }.Concat(queue)); receivable[r.Wallet] = queue; }
+                                if (q < t - 0.000001m) { queue = new Queue<(decimal, decimal, DateTime, DateTime?)>(new[] { (t - q, u * (t - q) / t, dt, acq) }.Concat(queue)); receivable[r.Wallet] = queue; }
                             }
-                            if (left > 0.000001m)
+                            if (left > 0.000001m && carryOver)
+                            {
+                                // Carry-over: the extra share has no cost of its own (any gain shows when it is sold).
+                                Acquire(r.Wallet, "TITN", left, claimFee * left / qty, r.Time, "Extra TITN from the migration for leaving TGT in the contract (carry-over basis: no cost)");
+                            }
+                            else if (left > 0.000001m)
                             {
                                 // The extra share for leaving TGT in the contract: more proceeds from the TGT exchange.
                                 var value = Px(titnPx, r.Time) is { } p2 ? Math.Round(left * p2, 2) : (decimal?)null;
@@ -693,6 +727,7 @@ public static partial class WebDashboard
                 notes,
                 price,
                 yearEnd,
+                migration = carryOver ? "carryover" : "exchange",
                 feesByYear = feeTotal.ToDictionary(kv => kv.Key.ToString(CultureInfo.InvariantCulture), kv => Math.Round(kv.Value, 2)),
                 updatedUtc = DateTime.UtcNow,
             };
