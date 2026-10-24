@@ -250,6 +250,7 @@ public static partial class WebDashboard
         public bool Used, Solver;
     }
 
+    static readonly HashSet<string> UsdtTokens = new() { "0xdac17f958d2ee523a2206206994597c13d831ec7", "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9" };
     static bool IsUsdToken(string token) => EvmStablecoins.Contains(token) || token is "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" or "0xdac17f958d2ee523a2206206994597c13d831ec7";
     static bool IsExplainedContract(string a) => TitnKnownContracts.Contains(a) || TitnStakingContracts.Contains(a) || TokenBridgeContracts.Contains(a) || a == MergeTgtContract || a == ZeroAddress || TitnRewardSources.ContainsKey(a);
 
@@ -260,6 +261,7 @@ public static partial class WebDashboard
         public string Wallet = "", Chain = "", Tx = "", Method = "", EthOutTo = "";
         public DateTime Time;
         public Dictionary<string, LegNet> Legs = new();
+        public Dictionary<string, LegNet> Stables = new(); // USDC (incl. USDC.e) and USDT movements in this transaction
         public decimal Usd, EthOut, EthIn, Fee;
         public bool Signed, EthPlainIn;
         public HashSet<string> EthInFrom = new();
@@ -301,7 +303,15 @@ public static partial class WebDashboard
                     {
                         var r = RowFor(t.Tx, t.Time);
                         var sign = t.To == w.Address ? 1 : -1;
-                        if (IsUsdToken(t.Token)) { r.Usd += sign * t.Amount; continue; }
+                        if (IsUsdToken(t.Token))
+                        {
+                            r.Usd += sign * t.Amount;
+                            var fam = UsdtTokens.Contains(t.Token) ? "USDT" : "USDC";
+                            if (!r.Stables.TryGetValue(fam, out var sl)) r.Stables[fam] = sl = new LegNet(fam, 0, new HashSet<string>(), t.Method is "transfer" or "0xa9059cbb");
+                            r.Stables[fam] = sl with { Qty = sl.Qty + sign * t.Amount };
+                            sl.Counterparties.Add(sign > 0 ? t.From : t.To);
+                            continue;
+                        }
                         var asset = t.Token == TitnToken ? "TITN" : TgtTokens.Contains(t.Token) ? "TGT" : null;
                         if (asset is null) continue;
                         var cp = sign > 0 ? t.From : t.To;
@@ -410,12 +420,59 @@ public static partial class WebDashboard
             }
 
             // Half of a fee belongs to the stablecoin given up: its proceeds fall by that much (a loss of the same amount).
-            void UsdFeeShare(string wallet, DateTime time, decimal usd, decimal half)
+            // (Recorded per transaction and applied when that transaction's USDC / USDT is settled below.)
+            decimal rowFeeShare = 0m;
+            void UsdFeeShare(string wallet, DateTime time, decimal usd, decimal half) { if (half > 0) rowFeeShare += half; }
+
+            // USDC and USDT in one transaction: lots at $1. Bought, received from sales, rewards and bridges come in; spent
+            // on purchases or paid to solvers goes out at $1 less any fee share; own moves and exchange deposits move.
+            void SettleStables(EvmRow r, decimal halfFee, SolverLeg? payHere)
             {
-                if (half <= 0) return;
-                var k = (wallet, time.Year);
-                var cur = usdFeeShare.TryGetValue(k, out var c) ? c : (0m, 0m, 0);
-                usdFeeShare[k] = (cur.Item1 + usd, cur.Item2 + half, cur.Item3 + 1);
+                foreach (var leg in r.Stables.Values)
+                {
+                    var n = leg.Qty; var s = leg.Asset; var q = Math.Abs(n); var cps = leg.Counterparties;
+                    if (q < 0.01m) continue;
+                    var ownCp = cps.FirstOrDefault(own.Contains);
+                    if (ownCp is not null)
+                    {
+                        if (n < 0) { Move(r.Wallet, ownCp, s, q, q, " (moved from " + r.Wallet[..6] + "…)"); handled.Add(ownCp + "|" + r.Tx); }
+                        else Acquire(r.Wallet, s, q, q, r.Time, "Received from your own wallet");
+                        continue;
+                    }
+                    if (cps.Contains(AerodromeTitnPool)) continue; // settled with the liquidity position
+                    if (n > 0 && (cps.Overlaps(TitnStakingContracts) || cps.Any(TitnRewardSources.ContainsKey))) { Acquire(r.Wallet, s, q, q, r.Time, "Reward paid in " + s + " (income at $1.00)"); continue; }
+                    if (n > 0 && cps.Contains(ZeroAddress)) { Acquire(r.Wallet, s, q, q, r.Time, "Bridged in (minted by Circle, e.g. from Noble / Osmosis); cost $1.00"); continue; }
+                    if (midgardByInTx.TryGetValue(r.Tx, out var mg) && n < 0 && mg.InAsset.Contains("USD"))
+                    {
+                        if (mg.Type == "swap") Dispose(r.Wallet, r.Chain, s, q, q - halfFee, r.Time, r.Tx, $"{s} swapped through {mg.Network}" + (halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : ""));
+                        continue; // a refunded deposit comes back: nothing to record
+                    }
+                    var mOut = n > 0 ? midgard.FirstOrDefault(m => m.Outs.Any(o => o.Address == r.Wallet && o.Asset.Contains("USD") && Math.Abs(o.Amount - q) <= Math.Max(0.02m, q * 0.01m)) && (r.Time - m.Time).TotalDays is > -0.1 and < 10) : null;
+                    if (mOut is not null) { if (mOut.Type == "swap") Acquire(r.Wallet, s, q, q, r.Time, $"Bought through {mOut.Network} with {mOut.InAmount:0.####} {mOut.InAsset.Split('-')[0]}"); continue; }
+                    var trade = r.Legs.Values.Any(l => Math.Abs(l.Qty) >= 0.000001m && !l.Counterparties.Overlaps(TitnStakingContracts) && !l.Counterparties.Overlaps(own) && !l.Counterparties.Contains(ZeroAddress)
+                            && !l.Counterparties.Contains(MergeTgtContract) && !l.Counterparties.Contains(AerodromeTitnPool) && !l.Counterparties.Contains(TitnAirdropContract))
+                        || Math.Abs(r.EthIn - r.EthOut) > 0.0000001m;
+                    if (trade)
+                    {
+                        if (n < 0) Dispose(r.Wallet, r.Chain, s, q, q - rowFeeShare, r.Time, r.Tx, $"{s} spent on a purchase in this transaction" + (rowFeeShare > 0.004m ? $", less half the network fee (${rowFeeShare:N2})" : ""));
+                        else Acquire(r.Wallet, s, q, q, r.Time, "Received from a sale or swap");
+                        continue;
+                    }
+                    if (n < 0)
+                    {
+                        if (cps.Overlaps(ExchangeDepositAddresses))
+                        {
+                            Take(r.Wallet, s, q);
+                            movedToExchange.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = s, qty = q, to = cps.First(), valueThatDay = (decimal?)q });
+                            continue;
+                        }
+                        if (payHere is not null && payHere.Asset == "USD") { Dispose(r.Wallet, r.Chain, s, q, q - payHere.FeeHalf, r.Time, r.Tx, $"{s} paid to a cross-chain solver for a purchase"); continue; }
+                        if (leg.Plain) { unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = s, qty = q, direction = "out", counterparty = string.Join(",", cps), valueThatDay = (decimal?)q }); continue; }
+                        Dispose(r.Wallet, r.Chain, s, q, q, r.Time, r.Tx, $"{s} spent in a contract transaction");
+                    }
+                    else if (cps.Overlaps(CrossChainSolvers)) Acquire(r.Wallet, s, q, q, r.Time, "Delivered by a cross-chain solver; cost $1.00");
+                    else Acquire(r.Wallet, s, q, q, r.Time, leg.Plain ? $"Bought or received from {string.Join(",", cps)} (MoonPay, Coinbase, an exchange or a swap; not income); cost $1.00" : "Received in a contract transaction; cost $1.00");
+                }
             }
 
             // What was held (and its cost) at the end of each year, per asset.
@@ -432,6 +489,7 @@ public static partial class WebDashboard
             {
                 while (r.Time.Year > snapYear) { yearEnd[snapYear] = Snapshot(); snapYear++; }
                 if (handled.Contains(r.Wallet + "|" + r.Tx)) continue;
+                rowFeeShare = 0m;
 
                 // The network fee: ETH spent at its value that day; half may be allocated to the trade below.
                 var feeUsd = r.Fee > 0 ? EthUsd(r.Fee, r.Time) : 0m;
@@ -535,6 +593,8 @@ public static partial class WebDashboard
                         {
                             var (nt, nu, nf) = lp[r.Wallet];
                             var h = Math.Round(nf / 2, 4);
+                            if (nu > 0.01m) Acquire(r.Wallet, "USDC", nu, nu, r.Time, "USDC gained from the Aerodrome TITN/USDC liquidity position (net)");
+                            else if (nu < -0.01m) Dispose(r.Wallet, r.Chain, "USDC", -nu, -nu - h, r.Time, r.Tx, "USDC spent inside the Aerodrome TITN/USDC liquidity position (net)");
                             if (nt < -0.000001m) Dispose(r.Wallet, r.Chain, "TITN", -nt, Math.Max(nu, 0m) - h, r.Time, r.Tx, $"Aerodrome TITN/USDC liquidity closed: {-nt:N2} TITN came back short, sold inside the pool for {nu:N2} USDC net, less half the position's network fees (${h:N2})");
                             else if (nt > 0.000001m) { Acquire(r.Wallet, "TITN", nt, Math.Max(-nu, 0m) + h, r.Time, $"Aerodrome TITN/USDC liquidity closed: {nt:N2} extra TITN bought inside the pool for {-nu:N2} USDC net, plus half the position's network fees (${h:N2})"); UsdFeeShare(r.Wallet, r.Time, Math.Max(-nu, 0m), h); }
                             lp[r.Wallet] = (0m, 0m, 0m);
@@ -612,7 +672,7 @@ public static partial class WebDashboard
                 }
 
                 // ETH that moved in this transaction (the fee is already handled above).
-                if (ethDone || Math.Abs(ethNet) < 0.000000001m) continue;
+                if (ethDone || Math.Abs(ethNet) < 0.000000001m) { SettleStables(r, halfFee, payHere); continue; }
                 var tokenMoves = r.Legs.Values.Any(l => Math.Abs(l.Qty) >= 0.000001m);
                 if (ethNet < 0)
                 {
@@ -703,18 +763,10 @@ public static partial class WebDashboard
                         provisionalEth = (provisionalEth.Qty + q, provisionalEth.Usd + usd, provisionalEth.N + 1);
                     }
                 }
+                SettleStables(r, halfFee, payHere);
             }
             while (snapYear <= DateTime.UtcNow.Year) { yearEnd[snapYear] = Snapshot(); snapYear++; }
 
-            // The stablecoin side of fees in stablecoin trades: one summary line per wallet and year.
-            foreach (var ((wallet, year), (usd, fee, n)) in usdFeeShare.Where(kv => kv.Value.Fee > 0.004m))
-                disposals.Add(new
-                {
-                    wallet, chain = "base", asset = "USDC", qty = Math.Round(usd, 2), acquired = (DateTime?)null, sold = new DateTime(year, 12, 31, 0, 0, 0, DateTimeKind.Utc),
-                    proceeds = (decimal?)Math.Round(usd - fee, 2), cost = (decimal?)Math.Round(usd, 2), gain = (decimal?)Math.Round(-fee, 2), term = "short",
-                    how = $"USDC/USDT spent in {n} purchase(s) during {year}: half of each network fee reduces what the stablecoin brought (Treas. Reg. §1.1012-1(h)); summary of {n} transactions",
-                    lot = "", lotHow = "", tx = "",
-                });
             if (provisionalEth.N > 0) notes.Add($"{provisionalEth.Qty:0.####} ETH received from exchanges or other outside addresses in {provisionalEth.N} transfers is costed at that day's price (${provisionalEth.Usd:N2}). Load your Coinbase transaction history to use what you actually paid.");
 
             var price = new Dictionary<string, decimal?> { ["TITN"] = titnPx.Count > 0 ? titnPx.Last().Value : null, ["TGT"] = tgtPx.Count > 0 ? tgtPx.Last().Value : null, ["ETH"] = ethPx.Count > 0 ? ethPx.Last().Value : null };

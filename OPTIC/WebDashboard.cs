@@ -6151,7 +6151,7 @@ public static partial class WebDashboard
                                 </div>
 
                                 <div class=""tr-section"" id=""tr-tlots"" hidden>
-                                    <h3>4a. TGT, TITN and ETH: sales and exchanges (for Form 8949)</h3>
+                                    <h3>4a. TGT, TITN, ETH and USDC: sales and exchanges (for Form 8949)</h3>
                                     <p class=""tr-lede"" id=""tr-tlots-lede""></p>
                                     <div class=""tr-no-print"" style=""font-size: 13px; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"">
                                         <label for=""tr-migration""><strong>TGT→TITN migration</strong></label>
@@ -7453,7 +7453,7 @@ public static partial class WebDashboard
                                         row('Short-term sales and exchanges', fmtQs(sum(st1, d => d.qty)), fmtGain(g(st1)), `Proceeds ${fmtUsd(sum(st1, d => d.proceeds))}, cost ${fmtUsd(sum(st1, d => d.cost))}. Form 8949 Part I (section 4a)${tlNoCost.length ? `; ${tlNoCost.length} without a cost, not included` : ''}`) +
                                         (lt1.length ? row('Long-term sales and exchanges', fmtQs(sum(lt1, d => d.qty)), fmtGain(g(lt1)), `Proceeds ${fmtUsd(sum(lt1, d => d.proceeds))}, cost ${fmtUsd(sum(lt1, d => d.cost))}. Form 8949 Part II (section 4a)`) : '') +
                                         row(`Net gain or (loss) on ${esc(single)}`, '', fmtGain(g(tlYear)), 'Schedule D', true) +
-                                        (single === 'USDC' ? row('Held at the end of the year', '', '', 'USDC is carried at $1.00; current balances are on My Wallets') : row(`Held at the end of ${esc(a.year)}${evmNet ? ' (all networks)' : ''}`, heldS ? fmtQs(heldS.qty) : '0', heldS ? fmtUsd(heldS.cost) : fmtUsd(0), evmNet ? 'Holdings are kept per wallet, not per network' : 'Cost basis of what is still held')) +
+                                        row(`Held at the end of ${esc(a.year)}${evmNet ? ' (all networks)' : ''}`, heldS ? fmtQs(heldS.qty) : '0', heldS ? fmtUsd(heldS.cost) : fmtUsd(0), evmNet ? 'Holdings are kept per wallet, not per network' : 'Cost basis of what is still held') +
                                         (tl ? '' : row('<span class=""tr-flag"">Not loaded yet</span>', '', '', 'Your Ethereum, Arbitrum and Base wallets are still being read; this fills in when they are.'));
                                 }
 
@@ -7483,7 +7483,7 @@ public static partial class WebDashboard
                                     const optNow = (() => { try { const s = (market && (market.series || market.prices || market.daily)) || []; const last = Array.isArray(s) && s.length ? s[s.length - 1] : null; return last ? (last.close ?? last.price ?? last.usd ?? null) : null; } catch (e) { return null; } })();
                                     const rowsP = single || !optNetOk ? [] : [`<tr><td>OPT</td><td>${esc(dist.address.slice(0, 12))}… and the wallets linked to it</td><td class=""amount-cell"">${fmtOpt(a.held)}</td><td class=""amount-cell"">${fmtUsd(a.heldCost)}</td><td class=""amount-cell"">${optNow ? fmtUsd(a.held * optNow) : '–'}</td></tr>`];
                                     for (const h of (evmOk ? tlHeld : [])) if (h.qty > (h.asset === 'ETH' ? 0.000001 : 0.01)) rowsP.push(`<tr><td>${esc(h.asset)}</td><td>Your Ethereum, Arbitrum and Base wallets${h.asset === 'TITN' ? ' (staked and held)' : ''}${evmNet ? ' (all three networks; holdings are kept per wallet)' : ''}</td><td class=""amount-cell"">${fmtQ(h.qty, h.asset)}</td><td class=""amount-cell"">${fmtUsd(h.cost)}${h.unknownCostQty > (h.asset === 'ETH' ? 0.00001 : 0.01) ? ' <span class=""tr-flag"">part unknown</span>' : ''}</td><td class=""amount-cell"">${px[h.asset] ? fmtUsd(h.qty * px[h.asset]) : '–'}</td></tr>`);
-                                    if (pick('USDC') && evmOk) rowsP.push(`<tr><td>USDC</td><td>Base, Ethereum and Arbitrum</td><td class=""amount-cell"" colspan=""3"" style=""text-align: left; font-size: 12px; color: var(--text-secondary);"">A dollar stablecoin carried at $1.00, so it has no gain or loss of its own; current balances are on <a href=""/page/my-wallets"">My Wallets</a>.</td></tr>`);
+                                    if (pick('USDC') && evmOk && !tlHeld.some(h => h.asset === 'USDC')) rowsP.push(`<tr><td>USDC</td><td>Base, Ethereum and Arbitrum</td><td class=""amount-cell"" colspan=""3"" style=""text-align: left; font-size: 12px; color: var(--text-secondary);"">None held at the end of the year. Current balances, including Osmosis, are on <a href=""/page/my-wallets"">My Wallets</a>.</td></tr>`);
                                     if (!tl) rowsP.push(`<tr><td colspan=""5"" style=""font-size: 12px; color: var(--text-secondary);"">Add your Ethereum, Arbitrum or Base wallets on <a href=""/page/my-wallets"">My Wallets</a> to include TITN, TGT, ETH and USDC.</td></tr>`);
                                     $('tr-portfolio-body').innerHTML = rowsP.join('');
                                 }
@@ -8161,7 +8161,7 @@ public static partial class WebDashboard
                                     : wallets.map(w => `<tr>
                                         <td>${W.valid(w.a) ? `<input type=""radio"" name=""mw-primary"" value=""${esc(w.a)}"" ${w.p ? 'checked' : ''} aria-label=""Make ${esc(w.a)} the primary wallet"">` : ''}</td>
                                         <td style=""white-space: nowrap;"">${network(w.a)}</td>
-                                        <td class=""address-cell"">${esc(w.a)}${W.validEvm(w.a) ? `<div class=""mw-bal"" data-bal=""${esc(w.a)}"" style=""font-family: inherit; font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: normal;"">Reading balances…</div>` : ''}</td>
+                                        <td class=""address-cell"">${esc(w.a)}${W.validEvm(w.a) || W.validOsmo(w.a) ? `<div class=""mw-bal"" data-bal=""${esc(w.a)}"" style=""font-family: inherit; font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: normal;"">Reading balances…</div>` : ''}</td>
                                         <td><input type=""text"" data-label=""${esc(w.a)}"" value=""${esc(w.l)}"" maxlength=""40"" placeholder=""${w.p ? 'Primary' : 'My wallet'}"" style=""width: 100%; min-width: 140px;""></td>
                                         <td style=""white-space: nowrap;"">${reports(w.a)}</td>
                                         <td><button type=""button"" data-remove=""${esc(w.a)}"" style=""padding: 4px 10px; font-size: 11px;"">Remove</button></td>
@@ -8174,7 +8174,7 @@ public static partial class WebDashboard
                             const fillBalances = () => {
                                 const fmt = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' ? 6 : 2 });
                                 const usd = (v) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum' };
+                                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', osmosis: 'Osmosis' };
                                 document.querySelectorAll('[data-bal]').forEach(el => {
                                     const w = balances && balances.wallets.find(x => x.address === el.dataset.bal);
                                     if (!w) { el.textContent = balances ? 'No balances found.' : el.textContent; return; }

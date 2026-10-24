@@ -79,13 +79,18 @@ public static partial class WebDashboard
     };
 
     // Balances of ETH, USDC, TITN and TGT on Ethereum, Arbitrum and Base for the user's saved 0x... wallets (10-minute cache).
-    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct)
+    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null)
     {
         var ethPx = await LoadDailyPricesAsync("coingecko:ethereum", false, ct);
         var titnPx = await LoadDailyPricesAsync(TitnPriceKey, false, ct);
         var tgtPx = await LoadDailyPricesAsync(TgtPriceKey, false, ct);
         decimal Last(SortedDictionary<string, decimal> s) => s.Count > 0 ? s.Last().Value : 0m;
-        var px = new Dictionary<string, decimal> { ["ETH"] = Last(ethPx), ["USDC"] = 1m, ["USDC.e"] = 1m, ["TITN"] = Last(titnPx), ["TGT"] = Last(tgtPx) };
+        var px = new Dictionary<string, decimal> { ["ETH"] = Last(ethPx), ["USDC"] = 1m, ["USDC.e"] = 1m, ["USDT"] = 1m, ["TITN"] = Last(titnPx), ["TGT"] = Last(tgtPx) };
+        osmoWallets ??= new();
+        if (osmoWallets.Count > 0)
+        {
+            px["OSMO"] = Last(await LoadDailyPricesAsync("coingecko:osmosis", false, ct));
+        }
         var result = new List<object>();
         foreach (var w in wallets)
         {
@@ -132,7 +137,41 @@ public static partial class WebDashboard
             }).ToList();
             result.Add(new { address = w.Address, label = w.Label, chains, usd = chains.Sum(c => c.balances.Sum(b => b.usd)) });
         }
+        // Osmosis accounts: USDC, OPT and OSMO now (public Osmosis servers; current balances only).
+        foreach (var o in osmoWallets)
+        {
+            var bals = new List<(string Symbol, decimal Amount)>();
+            foreach (var lcd in new[] { "https://lcd.osmosis.zone", "https://osmosis-api.polkachu.com", "https://rest.cosmos.directory/osmosis" })
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(await EvmHttp.GetStringAsync($"{lcd}/cosmos/bank/v1beta1/balances/{o.Address}?pagination.limit=200", ct));
+                    foreach (var b in doc.RootElement.GetProperty("balances").EnumerateArray())
+                    {
+                        var denom = b.GetProperty("denom").GetString()!;
+                        var sym = denom == "uosmo" ? "OSMO" : denom.StartsWith("ibc/6AA47B", StringComparison.Ordinal) ? "OPT" : OsmosisUsdDenoms.Contains(denom) ? (denom.Contains("USDT", StringComparison.Ordinal) ? "USDT" : "USDC") : null;
+                        if (sym is null) continue;
+                        var amt = decimal.Parse(b.GetProperty("amount").GetString()!, CultureInfo.InvariantCulture) / 1_000_000m;
+                        if (amt > 0.0000001m) bals.Add((sym, amt));
+                    }
+                    break;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+            }
+            var rows = bals.GroupBy(b => b.Symbol).Select(g => new { symbol = g.Key, amount = g.Sum(b => b.Amount), usd = Math.Round(g.Sum(b => b.Amount) * (px.TryGetValue(g.Key, out var pp) ? pp : 0m), 2) }).ToList();
+            result.Add(new { address = o.Address, label = o.Label, chains = new[] { new { chain = "osmosis", balances = rows } }, usd = rows.Sum(b => b.usd) });
+        }
         return new { wallets = result, prices = px };
+    }
+
+    // The signed-in user's saved osmo1... accounts with their labels.
+    static List<(string Address, string Label)> UserOsmoWallets(HttpContext ctx)
+    {
+        var path = Path.Combine(DashboardAuth.UserDataDir(ctx), "wallets.json");
+        if (!File.Exists(path)) return new();
+        var arr = JsonNode.Parse(File.ReadAllText(path)) as JsonArray ?? new JsonArray();
+        return arr.Select(w => (Address: (w?["a"]?.ToString() ?? "").ToLowerInvariant(), Label: w?["l"]?.ToString() ?? ""))
+            .Where(w => IsOsmoAddress(w.Address)).ToList();
     }
 
     static void MapTitn(WebApplication app)
@@ -140,7 +179,7 @@ public static partial class WebDashboard
         app.MapGet("/api/evm/balances", async (HttpContext ctx) =>
         {
             var wallets = UserEvmWallets(ctx);
-            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted)); }
+            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx))); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not read your balances: " + ex.Message, 502); }
         });
         app.MapGet("/api/titn/summary", async (HttpContext ctx) =>
