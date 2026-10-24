@@ -5925,6 +5925,7 @@ public static partial class WebDashboard
                                         <table class=""data-table tr-summary""><tbody id=""tr-summary-body""></tbody></table>
                                     </div>
                                     <div id=""tr-review"" style=""font-size: 13px; margin-top: 8px;""></div>
+                                    <div id=""tr-other-assets-status"" class=""tr-no-print"" hidden style=""font-size: 13px; margin-top: 8px; color: var(--text-secondary);""></div>
                                     <div id=""tr-portfolio"" hidden style=""margin-top: 12px;"">
                                         <h4>All crypto assets held at the end of the year</h4>
                                         <div class=""data-table-wrap pnl-table-wrap"">
@@ -7821,16 +7822,11 @@ public static partial class WebDashboard
                                     return { address: w, dist: d, ledger: l, labels: s || {} };
                                 };
                                 try {
-                                    const hasEvm = window.opticWallets.listSaved().some(w => window.opticWallets.validEvm(w.a));
-                                    const [{ market, flows }, selected, , evidence, titn, titnLots] = await Promise.all([
+                                    const [{ market, flows }, selected, , evidence] = await Promise.all([
                                         window.opticMarket.load(),
                                         loadWallet(address),
                                         getJson('/api/tax/gift-senders').then(g => { giftSenders = g || {}; renderGifts(); }),
                                         fetch('/api/market/evidence/latest').then(r => r.json()).catch(() => null),
-                                        // THORWallet rewards in your saved 0x... wallets (other crypto income, section 1a).
-                                        hasEvm ? fetch('/api/titn/summary').then(r => r.ok ? r.json() : null).catch(() => null) : Promise.resolve(null),
-                                        // TGT and TITN cost basis, sales and exchanges (section 4a).
-                                        hasEvm ? fetch('/api/titn/lots').then(r => r.ok ? r.json() : null).catch(() => null) : Promise.resolve(null),
                                     ]);
                                     const { dist, ledger } = selected;
                                     labels = selected.labels || {};
@@ -7846,18 +7842,42 @@ public static partial class WebDashboard
                                             if (!wd) continue;
                                             for (const e of wd.ledger.entries) if (e.txHash === lk.optioTxHash && e.direction === lk.direction && !allW.some(x => x.address === e.counterparty)) e.counterparty = o.address;
                                         }
-                                    data = { market, flows, dist, ledger, evidence, others, titn, titnLots, osmoNotes: [selected, ...others].flatMap(x => x.osmoNotes || []) };
+                                    data = { market, flows, dist, ledger, evidence, others, titn: null, titnLots: null, osmoNotes: [selected, ...others].flatMap(x => x.osmoNotes || []) };
                                     await loadReviewed();
                                     // Default lot method: highest cost first, recorded once as a standing order (server-stamped).
                                     if (!lotMethod()) { try { await setLotMethod({ method: 'hifo' }); } catch (error) { status.textContent = 'Could not record the standing order: ' + error.message; } }
                                     render();
                                     status.textContent = '';
                                     renderWallets();
+                                    loadOtherAssets();
                                 } catch (error) {
                                     status.textContent = 'Error: ' + error.message;
                                 } finally {
                                     done();
                                 }
+                            };
+                            // TITN rewards and TGT / TITN / ETH lots from your saved 0x... wallets: loaded after the OPT report is shown
+                            // (the first load reads every network and can take minutes), and only when all crypto assets are shown.
+                            let otherAssetsLoading = false;
+                            const loadOtherAssets = () => {
+                                if (!data || otherAssetsLoading || (data.titn && data.titnLots) || $('tr-assets').value === 'opt') return;
+                                if (!window.opticWallets.listSaved().some(w => window.opticWallets.validEvm(w.a))) return;
+                                otherAssetsLoading = true;
+                                const note = $('tr-other-assets-status');
+                                note.hidden = false;
+                                note.textContent = 'Reading your Ethereum, Arbitrum and Base wallets for TITN, TGT and ETH. The first time can take several minutes; the OPT figures above are complete.';
+                                const forData = data;
+                                Promise.all([
+                                    fetch('/api/titn/summary').then(r => r.ok ? r.json() : null).catch(() => null),
+                                    fetch('/api/titn/lots').then(r => r.ok ? r.json() : null).catch(() => null),
+                                ]).then(([titn, titnLots]) => {
+                                    otherAssetsLoading = false;
+                                    if (data !== forData) return;
+                                    data.titn = titn; data.titnLots = titnLots;
+                                    note.textContent = titn && titnLots ? '' : 'Could not read your Ethereum, Arbitrum or Base wallets this time; TITN, TGT and ETH are not included. Reload to try again.';
+                                    note.hidden = !note.textContent;
+                                    render();
+                                });
                             };
                             // Approved values from the Liquidity & Distribution Review, fetched only when that rule is chosen.
                             const loadReviewed = async () => {
@@ -7969,7 +7989,7 @@ public static partial class WebDashboard
                             for (const el of [yearSelect, typeSelect, ruleSelect]) el.addEventListener('change', rerender);
                             // Assets shown: all crypto assets (default) or OPT only; remembered in this browser.
                             try { const saved = localStorage.getItem('optic_tr_assets'); if (saved === 'opt') $('tr-assets').value = 'opt'; } catch (e) { }
-                            $('tr-assets').addEventListener('change', () => { try { localStorage.setItem('optic_tr_assets', $('tr-assets').value); } catch (e) { } if (data) render(); });
+                            $('tr-assets').addEventListener('change', () => { try { localStorage.setItem('optic_tr_assets', $('tr-assets').value); } catch (e) { } if (data) { render(); loadOtherAssets(); } });
                             blockageInput.addEventListener('input', rerender);
                             $('tr-print').addEventListener('click', () => window.print());
                             if (addressInput.value) run();

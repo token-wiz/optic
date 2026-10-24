@@ -30,7 +30,7 @@ public static partial class WebDashboard
         "factory/osmo1em6xs47hd82806f5cxgyufguxrrc7l0aqx7nzzptjuqgswczk8csavdxek/alloyed/allUSDT",
     };
     static readonly SemaphoreSlim OsmosisWalletGate = new(1, 1);
-    static readonly HttpClient OsmosisArchiveHttp = new() { Timeout = TimeSpan.FromMinutes(4) };
+    static readonly HttpClient OsmosisArchiveHttp = new() { Timeout = TimeSpan.FromSeconds(90) };
 
     internal static bool IsOsmoAddress(string? a) => a is not null && Regex.IsMatch(a, "^osmo1[02-9ac-hj-np-z]{38,58}$");
 
@@ -59,25 +59,92 @@ public static partial class WebDashboard
 
     static string OsmosisCachePath(string address) => Path.Combine(Environment.CurrentDirectory, "odata", "osmosis", address + ".json");
 
-    // Every successful transaction the address signed or received tokens in, from the archive node (cached).
+    static readonly HashSet<string> OsmosisRefreshing = new(StringComparer.Ordinal);
+
+    // Every successful transaction the address signed or received tokens in, from the archive node (cached). Once a
+    // cache exists it is used straight away; when it is over 6 hours old it is brought up to date in the background, so
+    // a slow or unreachable archive node never holds up a report.
     static async Task<List<OsmoTx>> LoadOsmosisTxsAsync(string address, bool refresh, CancellationToken ct)
     {
         var path = OsmosisCachePath(address);
         var cache = File.Exists(path) ? JsonNode.Parse(await File.ReadAllTextAsync(path, ct))!.AsObject() : new JsonObject { ["scannedToHeight"] = 0L, ["txs"] = new JsonArray() };
-        var scanned = long.Parse(cache["scannedToHeight"]!.ToJsonString(), CultureInfo.InvariantCulture);
-        var txs = cache["txs"]!.AsArray();
         DateTime? updated = cache["updatedUtc"] is { } u && DateTime.TryParse(u.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var ut) ? ut : null;
-        if (refresh || updated is null || DateTime.UtcNow - updated > TimeSpan.FromHours(6))
+        if (refresh || updated is null) await UpdateOsmosisCacheAsync(address, cache, ct);
+        else if (DateTime.UtcNow - updated > TimeSpan.FromHours(6))
+        {
+            lock (OsmosisRefreshing) if (!OsmosisRefreshing.Add(address)) goto use;
+            _ = Task.Run(async () =>
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+                try
+                {
+                    var fresh = JsonNode.Parse(await File.ReadAllTextAsync(path, cts.Token))!.AsObject();
+                    await UpdateOsmosisCacheAsync(address, fresh, cts.Token);
+                }
+                catch (Exception ex) { Console.WriteLine($"Osmosis history refresh for {address} failed (the saved copy stays in use): {ex.Message}"); }
+                finally { lock (OsmosisRefreshing) OsmosisRefreshing.Remove(address); }
+            });
+        }
+        use:
+        return OsmoTxsFromCache(cache["txs"]!.AsArray());
+    }
+
+    // Public Osmosis REST servers used when the archive node fails. They keep recent history only, so one is used only
+    // if it still has the first block after what the cache already covers (no gap can be skipped).
+    static readonly string[] OsmosisBackupLcds =
+    {
+        "https://osmosis-api.polkachu.com",
+        "https://rest.cosmos.directory/osmosis",
+        "https://osmosis-rest.publicnode.com",
+    };
+    static readonly HttpClient OsmosisHistoryHttp = new() { Timeout = TimeSpan.FromSeconds(45) };
+
+    // Adds new transactions to the cache and saves it: from the archive node, or a backup server that covers the gap.
+    static async Task UpdateOsmosisCacheAsync(string address, JsonObject cache, CancellationToken ct)
+    {
+        var scanned = long.Parse(cache["scannedToHeight"]!.ToJsonString(), CultureInfo.InvariantCulture);
+        var errors = new List<string>();
+        foreach (var lcd in new[] { OsmosisArchiveLcd }.Concat(OsmosisBackupLcds))
+        {
+            try
+            {
+                if (lcd != OsmosisArchiveLcd)
+                {
+                    // A backup needs the full history for a first scan, and otherwise the first block not yet covered.
+                    if (scanned <= 0) continue;
+                    using var block = await OsmosisHistoryHttp.GetAsync($"{lcd}/cosmos/base/tendermint/v1beta1/blocks/{scanned + 1}", ct);
+                    if (!block.IsSuccessStatusCode) { errors.Add($"{lcd}: no longer has block {scanned + 1}"); continue; }
+                }
+                await ScanOsmosisHistoryAsync(lcd, address, cache, scanned, ct);
+                if (errors.Count > 0) Console.WriteLine($"Osmosis history for {address} read from {lcd} ({string.Join("; ", errors)})");
+                return;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException && !ct.IsCancellationRequested)
+            {
+                errors.Add($"{lcd}: {ex.Message}");
+            }
+        }
+        throw new InvalidOperationException("No Osmosis history server could be read: " + string.Join("; ", errors));
+    }
+
+    static async Task ScanOsmosisHistoryAsync(string lcd, string address, JsonObject cache, long scanned, CancellationToken ct)
+    {
+        var path = OsmosisCachePath(address);
+        var txs = cache["txs"]!.AsArray();
+        // The chain height before scanning: everything up to it is covered afterwards, even with no new transactions.
+        long chainHeight = 0;
+        using (var latest = JsonDocument.Parse(await OsmosisHistoryHttp.GetStringAsync($"{lcd}/cosmos/base/tendermint/v1beta1/blocks/latest", ct)))
+            chainHeight = long.Parse(latest.RootElement.GetProperty("block").GetProperty("header").GetProperty("height").GetString()!, CultureInfo.InvariantCulture);
         {
             var seen = new HashSet<string>(txs.Select(t => t!["txhash"]!.GetValue<string>()), StringComparer.Ordinal);
-            long maxHeight = scanned;
+            long maxHeight = Math.Max(scanned, chainHeight);
             foreach (var q in new[] { $"message.sender='{address}'", $"transfer.recipient='{address}'" })
             {
                 var query = scanned > 0 ? $"{q} AND tx.height>{scanned}" : q;
                 for (var page = 1; page <= 100; page++)
                 {
-                    var url = $"{OsmosisArchiveLcd}/cosmos/tx/v1beta1/txs?query={Uri.EscapeDataString(query)}&page={page}&limit=100&order_by=ORDER_BY_ASC";
-                    using var doc = JsonDocument.Parse(await OsmosisArchiveHttp.GetStringAsync(url, ct));
+                    var url = $"{lcd}/cosmos/tx/v1beta1/txs?query={Uri.EscapeDataString(query)}&page={page}&limit=100&order_by=ORDER_BY_ASC";
+                    using var doc = JsonDocument.Parse(await (lcd == OsmosisArchiveLcd ? OsmosisArchiveHttp : OsmosisHistoryHttp).GetStringAsync(url, ct));
                     var list = doc.RootElement.TryGetProperty("tx_responses", out var tr) ? tr.EnumerateArray().ToList() : new List<JsonElement>();
                     foreach (var r in list)
                     {
@@ -102,11 +169,15 @@ public static partial class WebDashboard
                 }
             }
             cache["scannedToHeight"] = maxHeight;
+            cache["source"] = lcd;
             cache["updatedUtc"] = DateTime.UtcNow;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, cache.ToJsonString(), ct);
         }
-        return txs.Select(t =>
+    }
+
+    static List<OsmoTx> OsmoTxsFromCache(JsonArray txs) =>
+        txs.Select(t =>
         {
             using var d = JsonDocument.Parse(t!.ToJsonString());
             var r = d.RootElement;
@@ -120,7 +191,6 @@ public static partial class WebDashboard
                 Fee = r.GetProperty("fee").EnumerateArray().GroupBy(c => c.GetProperty("denom").GetString()!).ToDictionary(g => g.Key, g => g.Sum(c => decimal.Parse(c.GetProperty("amount").GetString()!, CultureInfo.InvariantCulture) / 1_000_000m)),
             };
         }).OrderBy(t => t.Height).ToList();
-    }
 
     static Dictionary<string, string> EventAttrs(JsonElement e) =>
         e.GetProperty("attributes").EnumerateArray().GroupBy(a => a.GetProperty("key").GetString()!).ToDictionary(g => g.Key, g => g.First().GetProperty("value").GetString() ?? "");
