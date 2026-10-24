@@ -295,6 +295,8 @@ public static partial class WebDashboard
                     rewards.Add(new
                     {
                         time = t.Time, chain, wallet, source = src.Name, kind = src.Kind, symbol = stable ? "USDC" : "TITN", token = t.Token,
+                        // What earned the reward (TITN staking pays in USDC, so this differs from what was paid).
+                        earnedFrom = src.Name.StartsWith("TGT", StringComparison.Ordinal) ? "TGT" : "TITN",
                         amount = t.Amount, priceUsd = price, usd = price is { } p ? Math.Round(t.Amount * p, 2) : (decimal?)null,
                         priceSource = stable ? "USD stablecoin ($1.00)" : price is null ? "No TITN price for this day" : PriceOnDay(t.Time).Earlier ? TitnPriceSource + ", nearest earlier day (no price that day)" : TitnPriceSource,
                         tx = t.Tx,

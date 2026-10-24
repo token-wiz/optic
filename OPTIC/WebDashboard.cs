@@ -3617,6 +3617,7 @@ public static partial class WebDashboard
                 AppendTaxReportCard(sb);
                 break;
             case "sell-planner":
+                AppendOtherAssetPlannerCard(sb);
                 AppendTaxReportCard(sb, "planner");
                 break;
             case "fifo-sales":
@@ -5872,6 +5873,21 @@ public static partial class WebDashboard
                                         <select id=""tr-assets"">
                                             <option value="""">All my crypto assets</option>
                                             <option value=""opt"">OPT only</option>
+                                            <option value=""ETH"">ETH only</option>
+                                            <option value=""TITN"">TITN only</option>
+                                            <option value=""TGT"">TGT only</option>
+                                            <option value=""USDC"">USDC only</option>
+                                        </select>
+                                    </div>
+                                    <div class=""form-group tr-report-only"" style=""flex: 0 0 200px; margin-bottom: 0;"" title=""Show everything, or only activity on one network"">
+                                        <label for=""tr-network"">Network</label>
+                                        <select id=""tr-network"">
+                                            <option value="""">All networks</option>
+                                            <option value=""optio"">Optio</option>
+                                            <option value=""osmosis"">Osmosis (Cosmos)</option>
+                                            <option value=""ethereum"">Ethereum</option>
+                                            <option value=""arbitrum"">Arbitrum</option>
+                                            <option value=""base"">Base</option>
                                         </select>
                                     </div>
                                     <div class=""form-group"" style=""flex: 0 0 280px; margin-bottom: 0;"" title=""How to value OPT received on days when no exchange was open to the public and Osmosis had no trades"">
@@ -5919,7 +5935,7 @@ public static partial class WebDashboard
                                 <div class=""tr-print-only"" id=""tr-print-header"" style=""font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;""></div>
                                 <div class=""tr-disclaimer"" style=""font-size: 13px; line-height: 1.5; border-left: 4px solid var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 6%, transparent); padding: 10px 14px; border-radius: 6px; margin: 0 0 16px; max-width: 1040px;""><strong>Disclaimer:</strong> This report organizes public records and your own entries. It is not tax or legal advice. Consult a tax accountant and a tax attorney before relying on it or filing.</div>
 
-                                <div class=""tr-section"">
+                                <div class=""tr-section"" id=""tr-summary-section"">
                                     <h3>Summary</h3>
                                     <div class=""data-table-wrap pnl-table-wrap"">
                                         <table class=""data-table tr-summary""><tbody id=""tr-summary-body""></tbody></table>
@@ -7332,15 +7348,27 @@ public static partial class WebDashboard
                                 const row = (label, opt, usd, sub, strong) => `<tr${strong ? ' class=""tr-total""' : ''}><td>${label}</td><td class=""amount-cell"">${opt}</td><td class=""amount-cell"">${usd}</td><td style=""text-align: left; color: var(--text-secondary); font-size: 12px;"">${sub || ''}</td></tr>`;
                                 const salesGain = (xs) => sum(xs, s => s.gain);
                                 // THORWallet rewards received this year in your 0x... wallets (USDC at $1, TITN at the day's close).
-                                const allAssets = $('tr-assets').value !== 'opt';
-                                const titnYear = ((allAssets && data.titn && data.titn.rewards) || []).filter(r => String(r.time).startsWith(String(a.year)));
+                                // Assets shown: all, OPT only, or one other asset (ETH, TITN, TGT, USDC) with the OPT sections hidden.
+                                const assetSel = $('tr-assets').value;
+                                const single = assetSel && assetSel !== 'opt' ? assetSel : null;
+                                const allAssets = assetSel !== 'opt';
+                                const pick = (x) => !single || x === single;
+                                // Network shown: OPT sections belong to the selected wallet's network (Optio or Osmosis); the
+                                // Ethereum-side sections are filtered by the network each transaction happened on.
+                                const net = $('tr-network').value;
+                                const evmNet = ['ethereum', 'arbitrum', 'base'].includes(net) ? net : null;
+                                const optNetOk = !net || (net === 'optio' && dist.address.startsWith('optio1')) || (net === 'osmosis' && dist.address.startsWith('osmo1'));
+                                const evmOk = !net || !!evmNet;
+                                const pickChain = (ch) => !evmNet || ch === evmNet;
+                                const focused = single || !optNetOk;
+                                const titnYear = ((allAssets && evmOk && data.titn && data.titn.rewards) || []).filter(r => String(r.time).startsWith(String(a.year)) && pick(r.symbol) && pickChain(r.chain));
                                 const titnUnpriced = titnYear.filter(r => r.usd == null);
                                 // TGT and TITN sales and exchanges this year (section 4a).
-                                const tl = allAssets ? (data.titnLots || null) : null;
-                                const tlYear = ((tl && tl.disposals) || []).filter(d => String(d.sold).startsWith(String(a.year)));
+                                const tl = allAssets && evmOk ? (data.titnLots || null) : null;
+                                const tlYear = ((tl && tl.disposals) || []).filter(d => String(d.sold).startsWith(String(a.year)) && pick(d.asset) && pickChain(d.chain));
                                 const tlNoCost = tlYear.filter(d => d.cost == null || d.proceeds == null);
-                                const tlUnclassified = ((tl && tl.unclassified) || []).filter(u => String(u.time).startsWith(String(a.year)));
-                                const tlToExchange = ((tl && tl.movedToExchange) || []).filter(u => String(u.time).startsWith(String(a.year))).map(u => ({ ...u, direction: 'exchange', counterparty: u.to }));
+                                const tlUnclassified = ((tl && tl.unclassified) || []).filter(u => String(u.time).startsWith(String(a.year)) && pick(u.asset) && pickChain(u.chain));
+                                const tlToExchange = ((tl && tl.movedToExchange) || []).filter(u => String(u.time).startsWith(String(a.year)) && pick(u.asset) && pickChain(u.chain)).map(u => ({ ...u, direction: 'exchange', counterparty: u.to }));
                                 const titnRow = titnYear.length
                                     ? row('THORWallet (TITN) rewards', '', fmtUsd(sum(titnYear, r => r.usd)), `${titnYear.length} payments in USDC and TITN, not OPT (section 1a)${titnUnpriced.length ? `; ${titnUnpriced.length} unpriced, not included` : ''}. Ordinary income (Schedule 1, line 8v)`)
                                     : '';
@@ -7389,6 +7417,38 @@ public static partial class WebDashboard
                                     (noFmv ? `<span class=""tr-flag"">${noFmv} payout(s) have no market price at all</span> (before OPT first traded); they are left out of the totals. ` : '') +
                                     (ledger.truncated ? '<span class=""tr-flag"">The wallet history hit the 20,000-transaction cap; older transfers may be missing.</span>' : '');
 
+                                // One asset other than OPT: its own summary, and the OPT sections hidden.
+                                document.querySelectorAll('#tr-report .tr-section').forEach(s => { if (!['tr-summary-section', 'tr-titn', 'tr-tlots'].includes(s.id)) s.hidden = !!focused; });
+                                $('tr-review').hidden = !!focused;
+                                if (net) $('tr-print-header').innerHTML += ` · <strong>${esc($('tr-network').selectedOptions[0].textContent)} only</strong>`;
+                                if (focused && !single) {
+                                    // A network other than the selected wallet's: OPT is not shown; the other assets are summarised per asset.
+                                    const g = (xs) => sum(xs, d => d.gain);
+                                    const assets = [...new Set(tlYear.map(d => d.asset).concat(titnYear.map(r => r.symbol)))].sort();
+                                    $('tr-summary-body').innerHTML =
+                                        `<tr><th style=""text-align: left;"">Item</th><th style=""text-align: right;""></th><th style=""text-align: right;"">USD</th><th style=""text-align: left;"">Where it goes</th></tr>` +
+                                        (evmNet ? '' : row(`OPT on ${esc($('tr-network').selectedOptions[0].textContent)}`, '', '', `The wallet selected above is not on this network. Choose your ${net === 'osmosis' ? 'Osmosis account' : 'Optio wallet'} above to see its OPT.`)) +
+                                        (titnYear.length ? row('Rewards received', '', fmtUsd(sum(titnYear, r => r.usd)), `${titnYear.length} payments (section 1a). Ordinary income (Schedule 1, line 8v)`) : '') +
+                                        assets.map(s => { const xs = tlYear.filter(d => d.asset === s); return xs.length ? row(`${esc(s)} sales and exchanges`, '', fmtGain(g(xs)), `Proceeds ${fmtUsd(sum(xs, d => d.proceeds))}, cost ${fmtUsd(sum(xs, d => d.cost))} (section 4a)`) : ''; }).join('') +
+                                        (evmNet ? row(`Net gain or (loss) on ${esc($('tr-network').selectedOptions[0].textContent)}`, '', fmtGain(g(tlYear)), 'Schedule D', true) : '') +
+                                        (evmNet && !tl ? row('<span class=""tr-flag"">Not loaded yet</span>', '', '', 'Your Ethereum, Arbitrum and Base wallets are still being read; this fills in when they are.') : '');
+                                }
+                                if (single) {
+                                    $('tr-print-header').innerHTML += ` · <strong>${esc(single)} only</strong>`;
+                                    const g = (xs) => sum(xs, d => d.gain);
+                                    const st1 = tlYear.filter(d => d.term !== 'long'), lt1 = tlYear.filter(d => d.term === 'long');
+                                    const heldS = (((tl && tl.yearEnd && tl.yearEnd[String(a.year)]) || []).find(h => h.asset === single));
+                                    const fmtQs = (v) => Number(v).toLocaleString('en-US', { maximumFractionDigits: single === 'ETH' ? 6 : 2 });
+                                    $('tr-summary-body').innerHTML =
+                                        `<tr><th style=""text-align: left;"">Item</th><th style=""text-align: right;"">${esc(single)}</th><th style=""text-align: right;"">USD</th><th style=""text-align: left;"">Where it goes</th></tr>` +
+                                        (titnYear.length ? row(`${esc(single)} received as rewards`, fmtQs(sum(titnYear, r => r.amount)), fmtUsd(sum(titnYear, r => r.usd)), `${titnYear.length} payments (section 1a). Ordinary income (Schedule 1, line 8v)`) : '') +
+                                        row('Short-term sales and exchanges', fmtQs(sum(st1, d => d.qty)), fmtGain(g(st1)), `Proceeds ${fmtUsd(sum(st1, d => d.proceeds))}, cost ${fmtUsd(sum(st1, d => d.cost))}. Form 8949 Part I (section 4a)${tlNoCost.length ? `; ${tlNoCost.length} without a cost, not included` : ''}`) +
+                                        (lt1.length ? row('Long-term sales and exchanges', fmtQs(sum(lt1, d => d.qty)), fmtGain(g(lt1)), `Proceeds ${fmtUsd(sum(lt1, d => d.proceeds))}, cost ${fmtUsd(sum(lt1, d => d.cost))}. Form 8949 Part II (section 4a)`) : '') +
+                                        row(`Net gain or (loss) on ${esc(single)}`, '', fmtGain(g(tlYear)), 'Schedule D', true) +
+                                        (single === 'USDC' ? row('Held at the end of the year', '', '', 'USDC is carried at $1.00; current balances are on My Wallets') : row(`Held at the end of ${esc(a.year)}${evmNet ? ' (all networks)' : ''}`, heldS ? fmtQs(heldS.qty) : '0', heldS ? fmtUsd(heldS.cost) : fmtUsd(0), evmNet ? 'Holdings are kept per wallet, not per network' : 'Cost basis of what is still held')) +
+                                        (tl ? '' : row('<span class=""tr-flag"">Not loaded yet</span>', '', '', 'Your Ethereum, Arbitrum and Base wallets are still being read; this fills in when they are.'));
+                                }
+
                                 // Other crypto income: THORWallet rewards (section 1a).
                                 $('tr-titn').hidden = !titnYear.length;
                                 if (titnYear.length) {
@@ -7405,7 +7465,7 @@ public static partial class WebDashboard
                                 }
 
                                 // TGT and TITN (section 4a).
-                                const tlHeld = (tl && tl.yearEnd && tl.yearEnd[String(a.year)]) || [];
+                                const tlHeld = ((tl && tl.yearEnd && tl.yearEnd[String(a.year)]) || []).filter(h => pick(h.asset));
 
                                 // All crypto assets held at the end of the year (when All my crypto assets is chosen).
                                 $('tr-portfolio').hidden = !allAssets;
@@ -7413,9 +7473,9 @@ public static partial class WebDashboard
                                     const px = (tl && tl.price) || {};
                                     const fmtQ = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' ? 6 : 2 });
                                     const optNow = (() => { try { const s = (market && (market.series || market.prices || market.daily)) || []; const last = Array.isArray(s) && s.length ? s[s.length - 1] : null; return last ? (last.close ?? last.price ?? last.usd ?? null) : null; } catch (e) { return null; } })();
-                                    const rowsP = [`<tr><td>OPT</td><td>${esc(dist.address.slice(0, 12))}… and the wallets linked to it</td><td class=""amount-cell"">${fmtOpt(a.held)}</td><td class=""amount-cell"">${fmtUsd(a.heldCost)}</td><td class=""amount-cell"">${optNow ? fmtUsd(a.held * optNow) : '–'}</td></tr>`];
-                                    for (const h of tlHeld) if (h.qty > (h.asset === 'ETH' ? 0.000001 : 0.01)) rowsP.push(`<tr><td>${esc(h.asset)}</td><td>Your Ethereum, Arbitrum and Base wallets${h.asset === 'TITN' ? ' (staked and held)' : ''}</td><td class=""amount-cell"">${fmtQ(h.qty, h.asset)}</td><td class=""amount-cell"">${fmtUsd(h.cost)}${h.unknownCostQty > (h.asset === 'ETH' ? 0.00001 : 0.01) ? ' <span class=""tr-flag"">part unknown</span>' : ''}</td><td class=""amount-cell"">${px[h.asset] ? fmtUsd(h.qty * px[h.asset]) : '–'}</td></tr>`);
-                                    rowsP.push(`<tr><td>USDC</td><td>Base, Ethereum and Arbitrum</td><td class=""amount-cell"" colspan=""3"" style=""text-align: left; font-size: 12px; color: var(--text-secondary);"">A dollar stablecoin carried at $1.00, so it has no gain or loss of its own; current balances are on <a href=""/page/my-wallets"">My Wallets</a>.</td></tr>`);
+                                    const rowsP = single || !optNetOk ? [] : [`<tr><td>OPT</td><td>${esc(dist.address.slice(0, 12))}… and the wallets linked to it</td><td class=""amount-cell"">${fmtOpt(a.held)}</td><td class=""amount-cell"">${fmtUsd(a.heldCost)}</td><td class=""amount-cell"">${optNow ? fmtUsd(a.held * optNow) : '–'}</td></tr>`];
+                                    for (const h of (evmOk ? tlHeld : [])) if (h.qty > (h.asset === 'ETH' ? 0.000001 : 0.01)) rowsP.push(`<tr><td>${esc(h.asset)}</td><td>Your Ethereum, Arbitrum and Base wallets${h.asset === 'TITN' ? ' (staked and held)' : ''}${evmNet ? ' (all three networks; holdings are kept per wallet)' : ''}</td><td class=""amount-cell"">${fmtQ(h.qty, h.asset)}</td><td class=""amount-cell"">${fmtUsd(h.cost)}${h.unknownCostQty > (h.asset === 'ETH' ? 0.00001 : 0.01) ? ' <span class=""tr-flag"">part unknown</span>' : ''}</td><td class=""amount-cell"">${px[h.asset] ? fmtUsd(h.qty * px[h.asset]) : '–'}</td></tr>`);
+                                    if (pick('USDC') && evmOk) rowsP.push(`<tr><td>USDC</td><td>Base, Ethereum and Arbitrum</td><td class=""amount-cell"" colspan=""3"" style=""text-align: left; font-size: 12px; color: var(--text-secondary);"">A dollar stablecoin carried at $1.00, so it has no gain or loss of its own; current balances are on <a href=""/page/my-wallets"">My Wallets</a>.</td></tr>`);
                                     if (!tl) rowsP.push(`<tr><td colspan=""5"" style=""font-size: 12px; color: var(--text-secondary);"">Add your Ethereum, Arbitrum or Base wallets on <a href=""/page/my-wallets"">My Wallets</a> to include TITN, TGT, ETH and USDC.</td></tr>`);
                                     $('tr-portfolio-body').innerHTML = rowsP.join('');
                                 }
@@ -7859,6 +7919,23 @@ public static partial class WebDashboard
                             // TITN rewards and TGT / TITN / ETH lots from your saved 0x... wallets: loaded after the OPT report is shown
                             // (the first load reads every network and can take minutes), and only when all crypto assets are shown.
                             let otherAssetsLoading = false;
+                            // Adds a filter choice for every other asset found in your saved wallets (beyond the fixed list).
+                            const syncAssetOptions = () => {
+                                const sel = $('tr-assets'), have = new Set([...sel.options].map(o => o.value));
+                                const found = new Set();
+                                const tl = data && data.titnLots;
+                                if (tl) {
+                                    for (const d of tl.disposals || []) found.add(d.asset);
+                                    for (const h of tl.holdings || []) found.add(h.asset);
+                                    for (const u of tl.unclassified || []) found.add(u.asset);
+                                }
+                                for (const r of ((data && data.titn && data.titn.rewards) || [])) found.add(r.symbol);
+                                for (const s of [...found].filter(s => s && s !== 'OPT' && !have.has(s)).sort()) {
+                                    const o = document.createElement('option');
+                                    o.value = s; o.textContent = s + ' only';
+                                    sel.appendChild(o);
+                                }
+                            };
                             const loadOtherAssets = () => {
                                 if (!data || otherAssetsLoading || (data.titn && data.titnLots) || $('tr-assets').value === 'opt') return;
                                 if (!window.opticWallets.listSaved().some(w => window.opticWallets.validEvm(w.a))) return;
@@ -7874,6 +7951,7 @@ public static partial class WebDashboard
                                     otherAssetsLoading = false;
                                     if (data !== forData) return;
                                     data.titn = titn; data.titnLots = titnLots;
+                                    syncAssetOptions();
                                     note.textContent = titn && titnLots ? '' : 'Could not read your Ethereum, Arbitrum or Base wallets this time; TITN, TGT and ETH are not included. Reload to try again.';
                                     note.hidden = !note.textContent;
                                     render();
@@ -7988,7 +8066,9 @@ public static partial class WebDashboard
                             form.addEventListener('submit', (e) => { e.preventDefault(); run(); });
                             for (const el of [yearSelect, typeSelect, ruleSelect]) el.addEventListener('change', rerender);
                             // Assets shown: all crypto assets (default) or OPT only; remembered in this browser.
-                            try { const saved = localStorage.getItem('optic_tr_assets'); if (saved === 'opt') $('tr-assets').value = 'opt'; } catch (e) { }
+                            try { const saved = localStorage.getItem('optic_tr_assets'); if (saved && [...$('tr-assets').options].some(o => o.value === saved)) $('tr-assets').value = saved; } catch (e) { }
+                            $('tr-network').addEventListener('change', () => { try { localStorage.setItem('optic_tr_network', $('tr-network').value); } catch (e) { } if (data) { render(); loadOtherAssets(); } });
+                            try { const savedNet = localStorage.getItem('optic_tr_network'); if (savedNet && [...$('tr-network').options].some(o => o.value === savedNet)) $('tr-network').value = savedNet; } catch (e) { }
                             $('tr-assets').addEventListener('change', () => { try { localStorage.setItem('optic_tr_assets', $('tr-assets').value); } catch (e) { } if (data) { render(); loadOtherAssets(); } });
                             blockageInput.addEventListener('input', rerender);
                             $('tr-print').addEventListener('click', () => window.print());
@@ -8136,7 +8216,7 @@ public static partial class WebDashboard
                             <form id=""addr-dist-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px;"">
                                 <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
                                     <label for=""addr-dist-input"">Wallet address</label>
-                                    <input type=""text"" id=""addr-dist-input"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
+                                    <input type=""text"" id=""addr-dist-input"" placeholder=""optio1... (or 0x... for TITN / TGT rewards)"" autocomplete=""off"" spellcheck=""false"" required>
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 0 140px; margin-bottom: 0;"">
                                     <label for=""addr-dist-year"">Year</label>
@@ -8148,6 +8228,25 @@ public static partial class WebDashboard
                                         <option value="""">Node and staking</option>
                                         <option value=""node"">Node only</option>
                                         <option value=""staking"">Staking / participation only</option>
+                                    </select>
+                                </div>
+                                <div class=""form-group"" style=""flex: 0 0 170px; margin-bottom: 0;"" title=""What earned the reward. TITN and TGT staking pay their rewards in USDC; OPT pays in OPT."">
+                                    <label for=""addr-dist-asset"">Rewards from</label>
+                                    <select id=""addr-dist-asset"">
+                                        <option value="""">All assets</option>
+                                        <option value=""OPT"">OPT</option>
+                                        <option value=""TITN"">TITN</option>
+                                        <option value=""TGT"">TGT</option>
+                                    </select>
+                                </div>
+                                <div class=""form-group"" style=""flex: 0 0 160px; margin-bottom: 0;"">
+                                    <label for=""addr-dist-network"">Network</label>
+                                    <select id=""addr-dist-network"">
+                                        <option value="""">All networks</option>
+                                        <option value=""optio"">Optio</option>
+                                        <option value=""base"">Base</option>
+                                        <option value=""arbitrum"">Arbitrum</option>
+                                        <option value=""ethereum"">Ethereum</option>
                                     </select>
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 0 260px; margin-bottom: 0;"" title=""How to price payouts on days when no exchange was open to the public and Osmosis had no trades"">
@@ -8210,6 +8309,23 @@ public static partial class WebDashboard
                                     </thead>
                                     <tbody id=""addr-dist-body""></tbody>
                                 </table>
+                            </div>
+                            <div id=""addr-dist-other"" hidden style=""margin-top: 16px;"">
+                                <div style=""display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px;"">
+                                    <h3 style=""margin: 0; font-size: 15px;"">Rewards from other assets</h3>
+                                    <label for=""addr-dist-other-wallet"" style=""font-size: 13px;"">Wallet</label>
+                                    <select id=""addr-dist-other-wallet"" style=""font-size: 13px;""><option value="""">All my wallets</option></select>
+                                </div>
+                                <div id=""addr-dist-other-status"" style=""font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;""></div>
+                                <div id=""addr-dist-other-tiles"" style=""display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 10px;""></div>
+                                <div class=""data-table-wrap"">
+                                    <table class=""data-table"">
+                                        <thead><tr><th>Date (UTC)</th><th>Network</th><th>Wallet</th><th>Rewards from</th><th>Program</th><th style=""text-align: right;"">Paid</th><th style=""text-align: right;"">Value (USD)</th><th>Tx</th></tr></thead>
+                                        <tbody id=""addr-dist-other-body""></tbody>
+                                        <tfoot id=""addr-dist-other-foot""></tfoot>
+                                    </table>
+                                </div>
+                                <a id=""addr-dist-other-csv"" class=""header-link"" href=""#"" style=""display: inline-block; margin-top: 8px;"">Download CSV</a>
                             </div>
                         </div>
                     </div>
@@ -8402,7 +8518,75 @@ public static partial class WebDashboard
                                     .catch(e => { absorbError = 'Market volume unavailable: ' + e.message; if (loaded) renderView(); });
                             };
 
+                            // Rewards from / Network: OPT payouts (Optio) and rewards earned by other assets in your saved
+                            // Ethereum, Arbitrum and Base wallets (TITN and TGT staking pay in USDC; the TITN airdrop paid in TITN).
+                            const assetSel = document.getElementById('addr-dist-asset');
+                            const networkSel = document.getElementById('addr-dist-network');
+                            const showOpt = () => (!assetSel.value || assetSel.value === 'OPT') && (!networkSel.value || networkSel.value === 'optio');
+                            const showOther = () => assetSel.value !== 'OPT' && networkSel.value !== 'optio';
+                            let otherRewards = null, otherLoading = false, pendingWallet = null, otherWallets = [], otherPrice = null;
+                            const renderOther = () => {
+                                const box = document.getElementById('addr-dist-other');
+                                box.hidden = !showOther();
+                                if (box.hidden) return;
+                                const st = document.getElementById('addr-dist-other-status');
+                                if (!window.opticWallets.listSaved().some(w => window.opticWallets.validEvm(w.a))) { st.innerHTML = 'Add your Ethereum, Arbitrum or Base wallets on <a href=""/page/my-wallets"">My Wallets</a> to see rewards from TITN and TGT.'; document.getElementById('addr-dist-other-body').innerHTML = ''; return; }
+                                if (!otherRewards) {
+                                    st.textContent = 'Reading your Ethereum, Arbitrum and Base wallets…';
+                                    if (!otherLoading) {
+                                        otherLoading = true;
+                                        fetch('/api/titn/summary').then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(j => { otherRewards = j.rewards || []; otherWallets = j.wallets || []; otherPrice = (j.price && j.price.usd) || null; otherLoading = false; renderOther(); })
+                                            .catch(e => { otherLoading = false; st.textContent = 'Could not read your other wallets: ' + e.message; });
+                                    }
+                                    return;
+                                }
+                                const year = yearSelect.value, type = typeSelect.value, from = assetSel.value, net = networkSel.value;
+                                // Wallet: all saved 0x... wallets by default, or one of them.
+                                const wsel = document.getElementById('addr-dist-other-wallet');
+                                const known = new Set([...wsel.options].map(o => o.value));
+                                for (const a of [...window.opticWallets.listSaved().filter(w => window.opticWallets.validEvm(w.a)).map(w => w.a), ...otherRewards.map(r => r.wallet)])
+                                    if (!known.has(a)) { known.add(a); const o = document.createElement('option'); o.value = a; o.textContent = window.opticWallets.label(a) || (a.slice(0, 6) + '…' + a.slice(-4)); wsel.appendChild(o); }
+                                if (pendingWallet && known.has(pendingWallet)) { wsel.value = pendingWallet; pendingWallet = null; }
+                                const wallet = wsel.value;
+                                const rows = otherRewards.filter(r => (!year || String(r.time).startsWith(year)) && (!from || r.earnedFrom === from) && (!net || r.chain === net) && (!wallet || r.wallet === wallet)
+                                    && (!type || (type === 'staking' ? r.kind === 'staking' : false)));
+                                const usd = (v) => '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                const netName = { base: 'Base', arbitrum: 'Arbitrum', ethereum: 'Ethereum' };
+                                const wName = (w) => window.opticWallets.label(w) || (w.slice(0, 6) + '…' + w.slice(-4));
+                                const byPaid = {};
+                                for (const r of rows) { const k = r.symbol; byPaid[k] = byPaid[k] || { amt: 0, usd: 0, n: 0 }; byPaid[k].amt += r.amount; byPaid[k].usd += r.usd || 0; byPaid[k].n++; }
+                                const tile = (k, v, s) => `<div style=""border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;""><div style=""font-size: 12px; color: var(--text-secondary);"">${k}</div><div style=""font-size: 18px; font-weight: 700;"">${v}</div><div style=""font-size: 12px; color: var(--text-muted);"">${s}</div></div>`;
+                                // TITN held now (in the wallet plus staked) for the wallet(s) shown.
+                                const heldW = otherWallets.filter(w => !wallet || w.address === wallet);
+                                const heldBal = heldW.reduce((s, w) => s + (w.titnBalance || 0), 0), heldStaked = heldW.reduce((s, w) => s + (w.titnStaked || 0), 0);
+                                const heldTile = (!from || from === 'TITN') && heldW.length ? tile('TITN held now', Number(heldBal + heldStaked).toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' TITN', `${Number(heldStaked).toLocaleString('en-US', { maximumFractionDigits: 0 })} staked · ${Number(heldBal).toLocaleString('en-US', { maximumFractionDigits: 0 })} in wallet${otherPrice ? ' · ' + usd((heldBal + heldStaked) * otherPrice) : ''}`) : '';
+                                document.getElementById('addr-dist-other-tiles').innerHTML = heldTile + tile('Income (USD)', usd(rows.reduce((s, r) => s + (r.usd || 0), 0)), `${rows.length} payments`) +
+                                    Object.entries(byPaid).map(([k, v]) => tile(`Paid in ${k}`, Number(v.amt).toLocaleString('en-US', { maximumFractionDigits: k === 'USDC' ? 2 : 0 }) + ' ' + k, `${v.n} payments · ${usd(v.usd)}`)).join('') +
+                                    (wallet ? '' : [...new Set(rows.map(r => r.wallet))].map(w => { const xs = rows.filter(r => r.wallet === w); return tile(wName(w), usd(xs.reduce((s, r) => s + (r.usd || 0), 0)), `${xs.length} payments`); }).join(''));
+                                st.textContent = `Rewards earned by ${from || 'TITN and TGT'} in ${wallet ? wName(wallet) : 'all your saved Ethereum, Arbitrum and Base wallets'}${net ? ' on ' + netName[net] : ''}${year ? ' during ' + year : ''}. TITN and TGT staking pay in USDC (valued at $1.00); the TITN airdrop paid in TITN (valued at that day\x27s price). Each is income when received.` + (type === 'node' ? ' None of these are node rewards.' : '');
+                                const scan = (r) => (r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : r.chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
+                                document.getElementById('addr-dist-other-body').innerHTML = rows.slice().reverse().map(r => `<tr><td>${String(r.time).slice(0, 16).replace('T', ' ')}</td><td>${netName[r.chain] || r.chain}</td><td>${wName(r.wallet)}</td><td>${r.earnedFrom}</td><td>${r.source}</td><td style=""text-align: right; white-space: nowrap;"">${Number(r.amount).toLocaleString('en-US', { maximumFractionDigits: r.symbol === 'USDC' ? 6 : 2 })} ${r.symbol}</td><td style=""text-align: right;"">${r.usd == null ? '–' : usd(r.usd)}</td><td style=""font-family: monospace; font-size: 11px;""><a href=""${scan(r)}"" target=""_blank"" rel=""noopener"">${r.tx.slice(0, 10)}…</a></td></tr>`).join('')
+                                    || '<tr><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No rewards for this filter.</td></tr>';
+                                document.getElementById('addr-dist-other-foot').innerHTML = rows.length ? `<tr class=""tr-total""><td colspan=""6""><strong>Total</strong></td><td style=""text-align: right;""><strong>${usd(rows.reduce((s, r) => s + (r.usd || 0), 0))}</strong></td><td></td></tr>` : '';
+                                const csv = ['date_utc,network,wallet,rewards_from,program,amount,paid_in,usd,tx'].concat(rows.map(r => [r.time, r.chain, r.wallet, r.earnedFrom, '""' + r.source + '""', r.amount, r.symbol, r.usd ?? '', r.tx].join(','))).join('\n');
+                                const link = document.getElementById('addr-dist-other-csv');
+                                link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+                                link.download = `rewards-${from || 'all'}${net ? '-' + net : ''}${year ? '-' + year : ''}.csv`;
+                            };
                             const renderView = () => {
+                                if (showOpt()) { if (loaded) renderOptView(); }
+                                else {
+                                    summary.style.display = 'none'; tableWrap.hidden = true; bandsWrap.hidden = true; viewEl.style.display = 'none'; csvLink.hidden = true;
+                                    status.textContent = 'OPT payouts are hidden by the Rewards from / Network filter.';
+                                }
+                                renderOther();
+                            };
+                            for (const el of [assetSel, networkSel]) el.addEventListener('change', () => { updateUrl(); renderView(); });
+                            for (const el of [yearSelect, typeSelect]) el.addEventListener('change', renderOther);
+                            document.getElementById('addr-dist-other-wallet').addEventListener('change', renderOther);
+                            setTimeout(renderOther, 0);
+
+                            const renderOptView = () => {
                                 const data = loaded.data;
                                 const year = yearSelect.value;
                                 const type = typeSelect.value;
@@ -8521,6 +8705,17 @@ public static partial class WebDashboard
                             form.addEventListener('submit', (e) => {
                                 e.preventDefault();
                                 const address = input.value.trim();
+                                // A 0x... address: show that wallet's rewards from TITN and TGT instead of OPT payouts.
+                                if (/^0x[0-9a-fA-F]{40}$/.test(address)) {
+                                    pendingWallet = address.toLowerCase();
+                                    if (assetSel.value === 'OPT') assetSel.value = '';
+                                    if (networkSel.value === 'optio') networkSel.value = '';
+                                    const ws = document.getElementById('addr-dist-other-wallet');
+                                    if ([...ws.options].some(o => o.value === pendingWallet)) { ws.value = pendingWallet; pendingWallet = null; }
+                                    renderOther();
+                                    document.getElementById('addr-dist-other').scrollIntoView({ behavior: 'smooth' });
+                                    return;
+                                }
                                 if (address) run(address);
                             });
 
@@ -9178,6 +9373,17 @@ public static partial class WebDashboard
                             form.addEventListener('submit', (e) => {
                                 e.preventDefault();
                                 const address = input.value.trim();
+                                // A 0x... address: show that wallet's rewards from TITN and TGT instead of OPT payouts.
+                                if (/^0x[0-9a-fA-F]{40}$/.test(address)) {
+                                    pendingWallet = address.toLowerCase();
+                                    if (assetSel.value === 'OPT') assetSel.value = '';
+                                    if (networkSel.value === 'optio') networkSel.value = '';
+                                    const ws = document.getElementById('addr-dist-other-wallet');
+                                    if ([...ws.options].some(o => o.value === pendingWallet)) { ws.value = pendingWallet; pendingWallet = null; }
+                                    renderOther();
+                                    document.getElementById('addr-dist-other').scrollIntoView({ behavior: 'smooth' });
+                                    return;
+                                }
                                 if (address) run(address);
                             });
 
