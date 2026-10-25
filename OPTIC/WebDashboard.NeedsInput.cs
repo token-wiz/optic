@@ -44,7 +44,7 @@ public static partial class WebDashboard
                 <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Date (UTC)</th><th>Wallet</th><th>From</th><th style="text-align: right;">OPT</th><th>Giver's cost (USD)</th><th>When they got it</th><th>Note</th><th></th></tr></thead><tbody id="ni-gift"></tbody></table></div>
 
                 <h3>Other crypto not classified <span id="ni-evm-count"></span></h3>
-                <p class="ni-note">Tokens and ETH / BNB moved between your Ethereum, Base, Arbitrum or BNB Chain wallets and an address OPTIC can't identify. A receipt stays at unknown cost and a send stays out of your sales until you answer. Answers apply to the whole transaction.</p>
+                <p class="ni-note">Tokens, ETH, BNB and SOL moved between your Ethereum, Base, Arbitrum, BNB Chain or Solana wallets and an address OPTIC can't identify. A receipt stays at unknown cost and a send stays out of your sales until you answer. Answers apply to the whole transaction.</p>
                 <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Date (UTC)</th><th>Wallet</th><th>Network</th><th>Sent / received</th><th>Other party</th><th style="text-align: right;">Amount</th><th style="text-align: right;">Value that day</th><th>What was it?</th><th>USD (sale price or cost)</th><th>Note</th><th></th></tr></thead><tbody id="ni-evm"></tbody></table></div>
                 <div id="ni-evm-notes" class="ni-note" style="margin-top: 6px;"></div>
             </div>
@@ -71,9 +71,9 @@ public static partial class WebDashboard
             const EVM_OUT = [['sale', 'Sold (enter what you got, in USD)'], ['own', 'Moved to my own wallet or exchange account'], ['gift-out', 'Gift'], ['ignore', 'Leave out']];
             const EVM_IN = [['purchase', 'Bought (enter what you paid)'], ['own', 'From my own wallet or exchange account'], ['gift-in', 'Gift received (enter the giver’s cost)'], ['income', 'Income (payment or reward)'], ['ignore', 'Leave out']];
             const select = (opts, chosen) => `<select data-f="kind"><option value="">Choose…</option>${opts.map(([k, l]) => `<option value="${k}"${k === chosen ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
-            const scanTx = (chain, tx) => (chain === 'bsc' ? 'https://bscscan.com/tx/' : chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + tx;
-            const scanAddr = (chain, a) => (chain === 'bsc' ? 'https://bscscan.com/address/' : chain === 'arbitrum' ? 'https://arbiscan.io/address/' : chain === 'ethereum' ? 'https://etherscan.io/address/' : 'https://basescan.org/address/') + a;
-            const NET = { ethereum: 'Ethereum', base: 'Base', arbitrum: 'Arbitrum', bsc: 'BNB Chain' };
+            const scanTx = (chain, tx) => (chain === 'solana' ? 'https://solscan.io/tx/' : chain === 'bsc' ? 'https://bscscan.com/tx/' : chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + tx;
+            const scanAddr = (chain, a) => (chain === 'solana' ? 'https://solscan.io/account/' : chain === 'bsc' ? 'https://bscscan.com/address/' : chain === 'arbitrum' ? 'https://arbiscan.io/address/' : chain === 'ethereum' ? 'https://etherscan.io/address/' : 'https://basescan.org/address/') + a;
+            const NET = { ethereum: 'Ethereum', base: 'Base', arbitrum: 'Arbitrum', bsc: 'BNB Chain', solana: 'Solana' };
 
             let opt = null, evm = null, evmLabels = {}, gifts = {};
             const keyOf = (e) => `${e.txHash}|${e.direction}|${e.counterparty}`;
@@ -155,7 +155,7 @@ public static partial class WebDashboard
 
             // ---------------------------------------------------------------- other crypto (0x... wallets)
             const loadEvm = async () => {
-                if (!W.listSaved().some(w => W.validEvm(w.a))) { evm = { unclassified: [], notes: [] }; return; }
+                if (!W.listSaved().some(w => W.validEvm(w.a) || W.validSolana(w.a))) { evm = { unclassified: [], notes: [] }; return; }
                 [evm, evmLabels] = await Promise.all([getJson('/api/titn/lots'), getJson('/api/titn/labels').catch(() => ({}))]);
             };
             const renderEvm = () => {

@@ -4773,7 +4773,10 @@ public static partial class WebDashboard
                             // Ethereum / Base / Arbitrum addresses are saved for reference only; no report reads them.
                             const validEvm = (a) => /^0x[0-9a-f]{40}$/.test(String(a || ''));
                             const validGonka = (a) => /^gonka1[02-9ac-hj-np-z]{38,58}$/.test(String(a || ''));
-                            const validSaved = (a) => validAny(a) || validEvm(a) || validGonka(a);
+                            // Solana: base58, case-sensitive (kept exactly as entered); checked after the other formats.
+                            const validSolana = (a) => !validAny(String(a || '').toLowerCase()) && !validEvm(String(a || '').toLowerCase()) && !validGonka(String(a || '').toLowerCase()) && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(a || ''));
+                            const norm = (a) => { const t = String(a || '').trim(); return validSolana(t) ? t : t.toLowerCase(); };
+                            const validSaved = (a) => validAny(a) || validEvm(a) || validGonka(a) || validSolana(a);
                             const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
                             const short = (a) => a.length > 20 ? a.slice(0, 12) + '...' + a.slice(-6) : a;
 
@@ -4785,9 +4788,9 @@ public static partial class WebDashboard
                             const save = (wallets, keepOsmo = true) => {
                                 const seen = new Set();
                                 const clean = [];
-                                const input = keepOsmo ? [...wallets, ...listSaved().filter(w => !valid(w.a) && !wallets.some(x => String(x.a || '').toLowerCase() === w.a))] : wallets;
+                                const input = keepOsmo ? [...wallets, ...listSaved().filter(w => !valid(w.a) && !wallets.some(x => norm(x.a) === w.a))] : wallets;
                                 for (const w of input) {
-                                    const a = String(w.a || '').trim().toLowerCase();
+                                    const a = norm(w.a);
                                     if (!validSaved(a) || seen.has(a)) continue;
                                     seen.add(a);
                                     clean.push({ a, l: String(w.l || '').trim().slice(0, 40), p: !!w.p });
@@ -4801,7 +4804,7 @@ public static partial class WebDashboard
                                 S.post('/api/me/wallets', clean).catch(e => window.alert('Could not save your wallets: ' + e.message));
                                 return clean;
                             };
-                            const find = (a) => listSaved().find(w => w.a === String(a || '').toLowerCase()) || null;
+                            const find = (a) => listSaved().find(w => w.a === norm(a)) || null;
 
                             // Exchange deposit addresses as [{ a: address, n: name, m: the user's deposit memo }].
                             // The address list is system-wide (admins edit it); each user's memos are in their own settings.
@@ -4848,6 +4851,7 @@ public static partial class WebDashboard
                                 validOsmo,
                                 validEvm,
                                 validGonka,
+                                validSolana,
                                 validSaved,
                                 list,
                                 listAll,
@@ -4861,7 +4865,7 @@ public static partial class WebDashboard
                                 exchange: (a) => exchanges().find(x => x.a === String(a || '').toLowerCase()) || null,
                                 primary: () => (list().find(w => w.p) || {}).a || null,
                                 add: (a, l) => save([...list(), { a, l: l || '', p: false }]),
-                                remove: (a) => save(listSaved().filter(w => w.a !== String(a || '').toLowerCase()), false),
+                                remove: (a) => save(listSaved().filter(w => w.a !== norm(a)), false),
                                 // Node payouts to one address, or (no address) to every saved Optio wallet: merged by time, each row
                                 // tagged with its wallet when there is more than one. address is '' for the combined view.
                                 distributions: async (address) => {
@@ -5913,6 +5917,7 @@ public static partial class WebDashboard
                                             <option value=""arbitrum"">Arbitrum</option>
                                             <option value=""base"">Base</option>
                                             <option value=""bsc"">BNB Chain</option>
+                                            <option value=""solana"">Solana</option>
                                         </select>
                                     </div>
                                     <div class=""form-group"" style=""flex: 0 0 280px; margin-bottom: 0;"" title=""How to value OPT received on days when no exchange was open to the public and Osmosis had no trades"">
@@ -7411,7 +7416,7 @@ public static partial class WebDashboard
                                 // Network shown: OPT sections belong to the selected wallet's network (Optio or Osmosis); the
                                 // Ethereum-side sections are filtered by the network each transaction happened on.
                                 const net = $('tr-network').value;
-                                const evmNet = ['ethereum', 'arbitrum', 'base', 'bsc'].includes(net) ? net : null;
+                                const evmNet = ['ethereum', 'arbitrum', 'base', 'bsc', 'solana'].includes(net) ? net : null;
                                 const optNetOk = !net || (data.all ? net === 'optio' || net === 'osmosis' : (net === 'optio' && dist.address.startsWith('optio1')) || (net === 'osmosis' && dist.address.startsWith('osmo1')));
                                 const evmOk = !net || !!evmNet;
                                 const pickChain = (ch) => !evmNet || ch === evmNet;
@@ -7508,7 +7513,7 @@ public static partial class WebDashboard
                                 $('tr-titn').hidden = !titnYear.length;
                                 if (titnYear.length) {
                                     const walletName = (w) => window.opticWallets.label(w) || (w.slice(0, 6) + '…' + w.slice(-4));
-                                    const scanUrl = (r) => (r.chain === 'bsc' ? 'https://bscscan.com/tx/' : r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
+                                    const scanUrl = (r) => (r.chain === 'solana' ? 'https://solscan.io/tx/' : r.chain === 'bsc' ? 'https://bscscan.com/tx/' : r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
                                     const amt = (v, sym) => Number(v).toLocaleString('en-US', { maximumFractionDigits: sym === 'USDC' ? 2 : 0 }) + ' ' + sym;
                                     $('tr-titn-lede').innerHTML = `Rewards from THORWallet's contracts paid into your saved Base and Arbitrum wallets during ${esc(a.year)}. Each payment is ordinary income on the day it was received (Rev. Rul. 2023-14): USDC at $1.00 and TITN at that day's DefiLlama price. The TITN you staked coming back to you is not income and is not listed. TITN received here starts a holding with a cost basis equal to the income reported.`;
                                     const srcs = [...new Set(titnYear.map(r => r.source + '|' + r.symbol))];
@@ -7538,7 +7543,7 @@ public static partial class WebDashboard
                                 if (!$('tr-tlots').hidden) {
                                     $('tr-migration').value = tl.migration || 'exchange';
                                     const wName = (w) => window.opticWallets.label(w) || (w.slice(0, 6) + '…' + w.slice(-4));
-                                    const txUrl = (chain, tx) => (chain === 'bsc' ? 'https://bscscan.com/tx/' : chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + tx;
+                                    const txUrl = (chain, tx) => (chain === 'solana' ? 'https://solscan.io/tx/' : chain === 'bsc' ? 'https://bscscan.com/tx/' : chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + tx;
                                     const day = (v) => v ? esc(String(v).slice(0, 10)) : '–';
                                     $('tr-tlots-lede').innerHTML = `Disposals of TGT, TITN and ETH in your saved Ethereum, Arbitrum and Base wallets during ${esc(a.year)}, kept separate from OPT. Each wallet keeps its own lots and the highest-cost lot is used first. Cost is what you paid (stablecoins at $1.00, ETH at the day's price, THORChain and Maya swaps at their recorded USD value). ETH received from an exchange is costed at that day's price until the exchange's records are loaded. Every network fee is ETH spent at its value that day; in a trade of one digital asset for another, half of the fee is added to the cost of what was received and half reduces the proceeds of what was given up (Treas. Reg. §1.1012-1(h)). Fees for staking, bridging and moves between your own wallets are not added to cost. ${tl.migration === 'carryover' ? 'The TGT→TITN migration is treated as not taxable: the TITN you received keeps what you paid for the TGT (and its purchase dates, for the holding period), and the extra TITN for leaving TGT in the contract a full year has no cost of its own.' : 'The TGT→TITN migration is an exchange of TGT at its market value on the day it was deposited; that value is the cost of the TITN the deposit entitled you to, and TITN received beyond that (for leaving TGT in the contract a full year) is additional proceeds of the exchange when received.'} Liquidity in the Aerodrome TITN/USDC pool is settled when the position closed: TITN that came back short was sold for the net USDC gained, extra TITN was bought for the net USDC paid. Staking, bridging between networks and moves between your own wallets are not sales.`;
                                     $('tr-tlots-flags').innerHTML = (tlNoCost.length ? `<div class=""tr-flag"" style=""margin-bottom: 4px;"">${tlNoCost.length} line(s) have no cost or proceeds yet and are left out of the totals.</div>` : '') +
@@ -8005,7 +8010,7 @@ public static partial class WebDashboard
                             };
                             const loadOtherAssets = () => {
                                 if (!data || otherAssetsLoading || (data.titn && data.titnLots) || $('tr-assets').value === 'opt') return;
-                                if (!window.opticWallets.listSaved().some(w => window.opticWallets.validEvm(w.a))) return;
+                                if (!window.opticWallets.listSaved().some(w => window.opticWallets.validEvm(w.a) || window.opticWallets.validSolana(w.a))) return;
                                 otherAssetsLoading = true;
                                 const note = $('tr-other-assets-status');
                                 note.hidden = false;
@@ -8171,7 +8176,7 @@ public static partial class WebDashboard
                             <form id=""mw-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px;"">
                                 <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
                                     <label for=""mw-address"">Wallet address</label>
-                                    <input type=""text"" id=""mw-address"" placeholder=""optio1..., osmo1..., gonka1... or 0x... (Ethereum / Base / Arbitrum / BNB Chain)"" autocomplete=""off"" spellcheck=""false"" required>
+                                    <input type=""text"" id=""mw-address"" placeholder=""optio1..., osmo1..., gonka1..., a Solana address, or 0x... (Ethereum / Base / Arbitrum / BNB Chain)"" autocomplete=""off"" spellcheck=""false"" required>
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 1 220px; margin-bottom: 0;"">
                                     <label for=""mw-label"">Label (optional)</label>
@@ -8209,13 +8214,15 @@ public static partial class WebDashboard
 
                             const render = () => {
                                 const wallets = W.listSaved();
-                                const network = (a) => W.valid(a) ? 'Optio' : W.validOsmo(a) ? 'Osmosis' : W.validGonka(a) ? 'Gonka' : '<span style=""color: var(--text-muted); font-size: 12px;"">Checking Ethereum, Base, Arbitrum and BNB Chain…</span>';
+                                const network = (a) => W.valid(a) ? 'Optio' : W.validOsmo(a) ? 'Osmosis' : W.validGonka(a) ? 'Gonka' : W.validSolana(a) ? 'Solana' : '<span style=""color: var(--text-muted); font-size: 12px;"">Checking Ethereum, Base, Arbitrum and BNB Chain…</span>';
                                 const reports = (a) => W.valid(a)
                                     ? `<a href=""/page/address-distributions?address=${encodeURIComponent(a)}"">Distributions</a> · <a href=""/page/pnl?address=${encodeURIComponent(a)}"">Profit &amp; Loss</a>`
                                     : W.validOsmo(a)
                                         ? `<a href=""https://www.mintscan.io/osmosis/address/${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">Mintscan</a> · used by the Tax Report`
                                     : W.validGonka(a)
                                         ? `<a href=""https://gonka.gg/address/${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">Gonka.gg</a> · balances only for now`
+                                    : W.validSolana(a)
+                                        ? `<a href=""https://solscan.io/account/${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">Solscan</a> · balances only for now`
                                         : [['Etherscan', 'https://etherscan.io/address/'], ['Basescan', 'https://basescan.org/address/'], ['Arbiscan', 'https://arbiscan.io/address/'], ['BscScan', 'https://bscscan.com/address/']]
                                             .map(([n, u]) => `<a href=""${u}${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">${n}</a>`).join(' · ');
                                 body.innerHTML = wallets.length === 0
@@ -8223,7 +8230,7 @@ public static partial class WebDashboard
                                     : wallets.map(w => `<tr>
                                         <td>${W.valid(w.a) ? `<input type=""radio"" name=""mw-primary"" value=""${esc(w.a)}"" ${w.p ? 'checked' : ''} aria-label=""Make ${esc(w.a)} the primary wallet"">` : ''}</td>
                                         <td ${W.validEvm(w.a) ? `data-net=""${esc(w.a)}"" title=""Checked on Ethereum, Base, Arbitrum and BNB Chain. Shown: the networks where this address holds or stakes something now.""` : 'style=""white-space: nowrap;""'}>${network(w.a)}</td>
-                                        <td class=""address-cell"">${esc(w.a)}${W.validEvm(w.a) || W.validOsmo(w.a) || W.validGonka(w.a) ? `<div class=""mw-bal"" data-bal=""${esc(w.a)}"" style=""font-family: inherit; font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: normal;"">Reading balances…</div>` : ''}</td>
+                                        <td class=""address-cell"">${esc(w.a)}${W.validEvm(w.a) || W.validOsmo(w.a) || W.validGonka(w.a) || W.validSolana(w.a) ? `<div class=""mw-bal"" data-bal=""${esc(w.a)}"" style=""font-family: inherit; font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: normal;"">Reading balances…</div>` : ''}</td>
                                         <td><input type=""text"" data-label=""${esc(w.a)}"" value=""${esc(w.l)}"" maxlength=""40"" placeholder=""${w.p ? 'Primary' : 'My wallet'}"" style=""width: 100%; min-width: 140px;""></td>
                                         <td style=""white-space: nowrap;"">${reports(w.a)}</td>
                                         <td><button type=""button"" data-remove=""${esc(w.a)}"" style=""padding: 4px 10px; font-size: 11px;"">Remove</button></td>
@@ -8233,14 +8240,14 @@ public static partial class WebDashboard
 
                             // What each 0x... wallet holds and stakes on each network (ETH, BNB, USDC, USDT, TITN, TGT, NILA, PATRIOT),
                             // and badges for the networks where it holds or stakes something. Detected, not entered.
-                            window.opticGet = window.opticGet || (() => { const c = {}; return (u) => c[u] || (c[u] = fetch(u).then(r => r.ok ? r.json() : null)); })();
+                            window.opticGet = window.opticGet || (() => { /* Last visit's answers (saved in this browser per user) are returned at once and replaced when the fresh ones arrive; each arrival fires 'optic-fresh' so the page can redraw. */ const mem = {}, key = (u) => 'optic.cache.' + ((window.opticUser || {}).name || '') + '.' + u; let timer = null; const get = (u) => { if (mem[u]) return mem[u]; let old = null; try { old = JSON.parse(localStorage.getItem(key(u)) || 'null'); } catch (e) { } const live = fetch(u).then(r => r.ok ? r.json() : null).then(j => { if (j) { try { localStorage.setItem(key(u), JSON.stringify({ t: Date.now(), j })); } catch (e) { } } return j; }); if (!old || !old.j) return mem[u] = live; get.cachedAt = Math.min(get.cachedAt || Infinity, old.t); get.waiting = (get.waiting || 0) + 1; live.catch(() => null).then(j => { mem[u] = Promise.resolve(j || old.j); get.waiting--; clearTimeout(timer); timer = setTimeout(() => window.dispatchEvent(new Event('optic-fresh')), 300); }); return mem[u] = Promise.resolve(old.j); }; return get; })();
                             let balances = null, titn = null, stakes = null;
-                            const CHAINS = ['bsc', 'ethereum', 'base', 'arbitrum', 'osmosis', 'gonka'];
+                            const CHAINS = ['bsc', 'ethereum', 'base', 'arbitrum', 'solana', 'osmosis', 'gonka'];
                             const fillBalances = () => {
-                                const fmt = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' || s === 'BNB' ? 6 : s === 'TITN' || s === 'TGT' || s === 'PATRIOT' ? 0 : 2 });
+                                const fmt = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' || s === 'BNB' || s === 'SOL' ? 6 : s === 'TITN' || s === 'TGT' || s === 'PATRIOT' ? 0 : 2 });
                                 const day = (v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
                                 const usd = (v) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka' };
+                                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', solana: 'Solana' };
                                 document.querySelectorAll('[data-bal]').forEach(el => {
                                     const a = el.dataset.bal.toLowerCase(), evm = W.validEvm(a);
                                     const w = balances && (balances.wallets || []).find(x => x.address.toLowerCase() === a);
@@ -8282,12 +8289,15 @@ public static partial class WebDashboard
                                 window.opticGet('/api/stakes').then(j => { stakes = (j && j.stakes) || []; fillBalances(); }).catch(() => { stakes = []; fillBalances(); });
                             };
 
+                            // Fresh balances and stakes arrived after the saved copy was shown: redraw with them.
+                            window.addEventListener('optic-fresh', () => { balances = titn = stakes = null; loadBalances(); });
+
                             document.getElementById('mw-form').addEventListener('submit', (e) => {
                                 e.preventDefault();
                                 const addressEl = document.getElementById('mw-address');
                                 const labelEl = document.getElementById('mw-label');
-                                const address = addressEl.value.trim().toLowerCase();
-                                if (!W.validSaved(address)) { status.textContent = 'That is not a valid optio1..., osmo1..., gonka1... or 0x... address.'; return; }
+                                const raw = addressEl.value.trim(), address = W.validSolana(raw) ? raw : raw.toLowerCase();
+                                if (!W.validSaved(address)) { status.textContent = 'That is not a valid optio1..., osmo1..., gonka1..., Solana or 0x... address.'; return; }
                                 if (W.isMine(address)) { status.textContent = 'That wallet is already saved.'; return; }
                                 W.add(address, labelEl.value);
                                 addressEl.value = '';
@@ -8689,7 +8699,7 @@ public static partial class WebDashboard
                                     Object.entries(byPaid).map(([k, v]) => tile(`Paid in ${k}`, Number(v.amt).toLocaleString('en-US', { maximumFractionDigits: k === 'USDC' ? 2 : 0 }) + ' ' + k, `${v.n} payments · ${usd(v.usd)}`)).join('') +
                                     (wallet ? '' : [...new Set(rows.map(r => r.wallet))].map(w => { const xs = rows.filter(r => r.wallet === w); return tile(wName(w), usd(xs.reduce((s, r) => s + (r.usd || 0), 0)), `${xs.length} payments`); }).join(''));
                                 st.textContent = `Rewards earned by ${from || 'TITN, TGT and NILA'} in ${wallet ? wName(wallet) : 'all your saved Ethereum, Arbitrum, Base and BNB Chain wallets'}${net ? ' on ' + netName[net] : ''}${year ? ' during ' + year : ''}. TITN and TGT staking pay in USDC (valued at $1.00); the TITN airdrop paid in TITN (valued at that day\x27s price). Each is income when received.${stakesShown.length ? ' NILA staking rewards build up in the staking contract; the payments table lists them once claimed.' : ''}` + (type === 'node' ? ' None of these are node rewards.' : '');
-                                const scan = (r) => (r.chain === 'bsc' ? 'https://bscscan.com/tx/' : r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : r.chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
+                                const scan = (r) => (r.chain === 'solana' ? 'https://solscan.io/tx/' : r.chain === 'bsc' ? 'https://bscscan.com/tx/' : r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : r.chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
                                 document.getElementById('addr-dist-other-body').innerHTML = rows.slice().reverse().map(r => `<tr><td>${String(r.time).slice(0, 16).replace('T', ' ')}</td><td>${netName[r.chain] || r.chain}</td><td>${wName(r.wallet)}</td><td>${r.earnedFrom}</td><td>${r.source}</td><td style=""text-align: right; white-space: nowrap;"">${Number(r.amount).toLocaleString('en-US', { maximumFractionDigits: r.symbol === 'USDC' ? 6 : 2 })} ${r.symbol}</td><td style=""text-align: right;"">${r.usd == null ? '–' : usd(r.usd)}</td><td style=""font-family: monospace; font-size: 11px;""><a href=""${scan(r)}"" target=""_blank"" rel=""noopener"">${r.tx.slice(0, 10)}…</a></td></tr>`).join('')
                                     || '<tr><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No rewards for this filter.</td></tr>';
                                 document.getElementById('addr-dist-other-foot').innerHTML = rows.length ? `<tr class=""tr-total""><td colspan=""6""><strong>Total</strong></td><td style=""text-align: right;""><strong>${usd(rows.reduce((s, r) => s + (r.usd || 0), 0))}</strong></td><td></td></tr>` : '';

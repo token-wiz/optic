@@ -89,18 +89,36 @@ public static partial class WebDashboard
         app.MapGet("/api/titn/lots", async (HttpContext ctx) =>
         {
             var wallets = UserEvmWallets(ctx);
-            if (wallets.Count == 0) return VJson(new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>() });
+            var solana = UserSolanaWallets(ctx);
+            if (wallets.Count == 0 && solana.Count == 0) return VJson(new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>() });
             var labelsPath = Path.Combine(DashboardAuth.UserDataDir(ctx), "titn-labels.json");
             var labels = File.Exists(labelsPath) ? JsonNode.Parse(await File.ReadAllTextAsync(labelsPath, ctx.RequestAborted)) as JsonObject ?? new() : new JsonObject();
-            try { return VJson(await BuildTitnLotsAsync(wallets, labels, ctx.Request.Query["refresh"] == "1", ctx.RequestAborted)); }
+            var refresh = ctx.Request.Query["refresh"] == "1";
+            try
+            {
+                object evm = wallets.Count > 0 ? await BuildTitnLotsAsync(wallets, labels, refresh, ctx.RequestAborted)
+                    : new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>(), notes = Array.Empty<string>() };
+                if (solana.Count == 0) return VJson(evm);
+                // Solana wallets: their own history, merged into the same lists (a failure there leaves the rest intact).
+                try { return VJson(MergeSolanaLots(evm, await BuildSolanaLotsAsync(solana, labels, refresh, ctx.RequestAborted))); }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+                {
+                    var node = JsonSerializer.SerializeToNode(evm) as JsonObject ?? new JsonObject();
+                    (node["notes"] as JsonArray ?? (JsonArray)(node["notes"] = new JsonArray())).Add("Could not read your Solana history this time: " + ex.Message);
+                    return VJson(node);
+                }
+            }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not build your TGT / TITN / ETH lots: " + ex.Message, 502); }
         });
         // Your answer for one transaction that could not be classified: { tx, kind, usd?, note? }; kind null clears it.
         app.MapPost("/api/titn/labels", async (HttpContext ctx) =>
         {
             var body = await JsonNode.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted) as JsonObject;
-            var tx = body?["tx"]?.ToString()?.Trim().ToLowerInvariant() ?? "";
-            if (!System.Text.RegularExpressions.Regex.IsMatch(tx, "^0x[0-9a-f]{64}$")) return VError("tx must be a transaction hash.");
+            // An Ethereum-style hash (lowercase) or a Solana signature (base58, case-sensitive).
+            var txRaw = body?["tx"]?.ToString()?.Trim() ?? "";
+            var tx = System.Text.RegularExpressions.Regex.IsMatch(txRaw, "^0x[0-9a-fA-F]{64}$") ? txRaw.ToLowerInvariant()
+                : System.Text.RegularExpressions.Regex.IsMatch(txRaw, "^[1-9A-HJ-NP-Za-km-z]{64,90}$") ? txRaw : "";
+            if (tx == "") return VError("tx must be a transaction hash.");
             var kind = body?["kind"]?.ToString();
             if (kind is not (null or "" or "purchase" or "sale" or "income" or "gift-in" or "gift-out" or "own" or "ignore")) return VError("Unknown answer.");
             decimal? usd = body?["usd"] is JsonValue uv && uv.TryGetValue<decimal>(out var ud) && ud >= 0 ? ud : null;

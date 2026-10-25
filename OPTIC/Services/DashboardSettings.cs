@@ -69,6 +69,7 @@ public static class DashboardSettings
     static readonly System.Text.RegularExpressions.Regex OsmoAddressPattern = new("^osmo1[02-9ac-hj-np-z]{38,58}$", System.Text.RegularExpressions.RegexOptions.Compiled);
     // Ethereum-style addresses (one address per key on Ethereum, Base and Arbitrum); saved for reference, not read by the tax report.
     static readonly System.Text.RegularExpressions.Regex EvmAddressPattern = new("^0x[0-9a-f]{40}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex SolanaAddressPattern = new("^[1-9A-HJ-NP-Za-km-z]{32,44}$", System.Text.RegularExpressions.RegexOptions.Compiled);
     static readonly System.Text.RegularExpressions.Regex GonkaAddressPattern = new("^gonka1[02-9ac-hj-np-z]{38,58}$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     static List<Wallet> CleanWallets(IEnumerable<Wallet?> items)
@@ -77,8 +78,15 @@ public static class DashboardSettings
         var clean = new List<Wallet>();
         foreach (var w in items)
         {
-            var a = (w?.a ?? "").Trim().ToLowerInvariant();
-            if (!(AddressPattern.IsMatch(a) || OsmoAddressPattern.IsMatch(a) || EvmAddressPattern.IsMatch(a) || GonkaAddressPattern.IsMatch(a)) || !seen.Add(a)) continue;
+            // Solana addresses are case-sensitive and kept as entered; every other address is lowercase.
+            var raw = (w?.a ?? "").Trim();
+            var a = raw.ToLowerInvariant();
+            if (!(AddressPattern.IsMatch(a) || OsmoAddressPattern.IsMatch(a) || EvmAddressPattern.IsMatch(a) || GonkaAddressPattern.IsMatch(a)))
+            {
+                if (!SolanaAddressPattern.IsMatch(raw)) continue;
+                a = raw;
+            }
+            if (!seen.Add(a)) continue;
             var l = (w!.l ?? "").Trim();
             clean.Add(new Wallet(a, l.Length > 40 ? l[..40] : l, w.p));
         }

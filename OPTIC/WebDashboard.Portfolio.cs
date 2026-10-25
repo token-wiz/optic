@@ -34,12 +34,12 @@ public static partial class WebDashboard
                 const $ = (id) => document.getElementById(id);
                 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => '&#' + ch.charCodeAt(0) + ';');
                 const usd = (v) => '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                const qty = (v, a) => Number(v).toLocaleString('en-US', { maximumFractionDigits: a === 'ETH' || a === 'BNB' ? 6 : a === 'OPT' || a === 'TITN' || a === 'TGT' || a === 'PATRIOT' ? 0 : 2 });
+                const qty = (v, a) => Number(v).toLocaleString('en-US', { maximumFractionDigits: a === 'ETH' || a === 'BNB' || a === 'SOL' ? 6 : a === 'OPT' || a === 'TITN' || a === 'TGT' || a === 'PATRIOT' ? 0 : 2 });
                 const day = (v) => v ? new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
-                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', optio: 'Optio' };
+                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', solana: 'Solana', optio: 'Optio' };
                 // One request per page for data the Portfolio and My Wallets cards both read.
-                window.opticGet = window.opticGet || (() => { const c = {}; return (u) => c[u] || (c[u] = fetch(u).then(r => r.ok ? r.json() : null)); })();
-                const ORDER = ['USDC', 'OPT', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'BNB', 'USDT', 'OSMO']; // cash (USDC) first
+                window.opticGet = window.opticGet || (() => { /* Last visit's answers (saved in this browser per user) are returned at once and replaced when the fresh ones arrive; each arrival fires 'optic-fresh' so the page can redraw. */ const mem = {}, key = (u) => 'optic.cache.' + ((window.opticUser || {}).name || '') + '.' + u; let timer = null; const get = (u) => { if (mem[u]) return mem[u]; let old = null; try { old = JSON.parse(localStorage.getItem(key(u)) || 'null'); } catch (e) { } const live = fetch(u).then(r => r.ok ? r.json() : null).then(j => { if (j) { try { localStorage.setItem(key(u), JSON.stringify({ t: Date.now(), j })); } catch (e) { } } return j; }); if (!old || !old.j) return mem[u] = live; get.cachedAt = Math.min(get.cachedAt || Infinity, old.t); get.waiting = (get.waiting || 0) + 1; live.catch(() => null).then(j => { mem[u] = Promise.resolve(j || old.j); get.waiting--; clearTimeout(timer); timer = setTimeout(() => window.dispatchEvent(new Event('optic-fresh')), 300); }); return mem[u] = Promise.resolve(old.j); }; return get; })();
+                const ORDER = ['USDC', 'OPT', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'SOL', 'BNB', 'USDT', 'OSMO']; // cash (USDC) first
                 const start = async () => {
                     const W = window.opticWallets;
                     if (!W) { setTimeout(start, 200); return; }
@@ -86,7 +86,7 @@ public static partial class WebDashboard
                     const jobs = [];
                     // OPT on each Optio wallet: liquid, staked, unbonding and unclaimed rewards.
                     for (const w of saved.filter(w => W.valid(w.a)))
-                        jobs.push(fetch('/api/staking/positions?address=' + encodeURIComponent(w.a)).then(r => r.ok ? r.json() : null).then(j => {
+                        jobs.push(window.opticGet('/api/staking/positions?address=' + encodeURIComponent(w.a)).then(j => {
                             if (!j || !j.totals) return;
                             const t = j.totals, n = name(w.a);
                             add('OPT', `${n} · Optio`, t.balanceOpt, 'in wallet');
@@ -134,14 +134,18 @@ public static partial class WebDashboard
                             render(true);
                         }).catch(() => { }));
                     // OPT price: latest daily close.
-                    jobs.push(fetch('/api/price/daily').then(r => r.ok ? r.json() : null).then(j => {
+                    jobs.push(window.opticGet('/api/price/daily').then(j => {
                         const last = j && j.rows && j.rows[j.rows.length - 1];
                         if (last) { prices.OPT = last.priceUsd; priceNote.OPT = `${last.from || 'CoinMarketCap'} ${last.date}`; }
                     }).catch(() => { }));
                     await Promise.all(jobs);
                     render(false);
+                    // Shown from the last visit while fresh figures load; redrawn as they arrive.
+                    const G = window.opticGet;
+                    if (G.waiting > 0 && G.cachedAt) $('pf-status').textContent = `Showing your figures from ${new Date(G.cachedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} while they refresh… ` + $('pf-status').textContent;
                 };
                 start();
+                window.addEventListener('optic-fresh', () => start());
             })();
         </script>
         """;

@@ -132,7 +132,7 @@ public static partial class WebDashboard
     }
 
     // Balances of ETH, BNB, USDC, USDT, TITN, TGT, NILA and PATRIOT on Ethereum, Arbitrum, Base and BNB Chain for the user's saved 0x... wallets (10-minute cache).
-    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null, List<(string Address, string Label)>? gonkaWallets = null)
+    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null, List<(string Address, string Label)>? gonkaWallets = null, List<(string Address, string Label)>? solanaWallets = null)
     {
         var ethPx = await LoadDailyPricesAsync("coingecko:ethereum", false, ct);
         var titnPx = await LoadDailyPricesAsync(TitnPriceKey, false, ct);
@@ -146,6 +146,12 @@ public static partial class WebDashboard
         }
         osmoWallets ??= new();
         gonkaWallets ??= new();
+        solanaWallets ??= new();
+        if (solanaWallets.Count > 0)
+        {
+            try { px["SOL"] = Last(await LoadDailyPricesAsync(SolanaPriceKey, false, ct)); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+        }
         if (gonkaWallets.Count > 0)
         {
             try { px["GNK"] = Last(await LoadDailyPricesAsync(GonkaPriceKey, false, ct)); }
@@ -243,6 +249,15 @@ public static partial class WebDashboard
             var rows = bals.Select(b => new { symbol = b.Symbol, amount = b.Amount, usd = Math.Round(b.Amount * (px.TryGetValue(b.Symbol, out var pp) ? pp : 0m), 2) }).ToList();
             result.Add(new { address = g.Address, label = g.Label, chains = new[] { new { chain = "gonka", balances = rows } }, usd = rows.Sum(b => b.usd) });
         }
+        // Solana accounts: SOL, USDC and USDT (current balances only).
+        foreach (var sw in solanaWallets)
+        {
+            List<(string Symbol, decimal Amount)> bals;
+            try { bals = await LoadSolanaBalancesAsync(sw.Address, ct); }
+            catch (HttpRequestException) { bals = new(); }
+            var rows = bals.Select(b => new { symbol = b.Symbol, amount = b.Amount, usd = Math.Round(b.Amount * (px.TryGetValue(b.Symbol, out var pp) ? pp : 0m), 2) }).ToList();
+            result.Add(new { address = sw.Address, label = sw.Label, chains = new[] { new { chain = "solana", balances = rows } }, usd = rows.Sum(b => b.usd) });
+        }
         return new { wallets = result, prices = px };
     }
 
@@ -261,7 +276,7 @@ public static partial class WebDashboard
         app.MapGet("/api/evm/balances", async (HttpContext ctx) =>
         {
             var wallets = UserEvmWallets(ctx);
-            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx), UserGonkaWallets(ctx))); }
+            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx), UserGonkaWallets(ctx), UserSolanaWallets(ctx))); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not read your balances: " + ex.Message, 502); }
         });
         app.MapGet("/api/titn/summary", async (HttpContext ctx) =>
