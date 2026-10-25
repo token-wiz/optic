@@ -34,6 +34,8 @@ public static partial class WebDashboard
         }),
         new("Market", new NavPage[]
         {
+            new("opt-sell-plan", "OPT Sell Plan", "How much OPT to sell each day, and where, for the most dollars"),
+            new("osmosis-sell", "Sell OPT on Osmosis", "Every OPT pool, live quotes and the best way to sell"),
             new("market-liquidity", "Market Liquidity", "Exchanges, Osmosis pools and sell quotes"),
             new("liquidity-evidence", "Liquidity Evidence", "Market history behind your payouts"),
             new("exchange-flows", "Exchange Flows", "Who sent the most OPT to exchanges without taking it back"),

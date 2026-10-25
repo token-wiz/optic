@@ -2304,6 +2304,8 @@ public static partial class WebDashboard
             "my-wallets" => "My Wallets",
             "needs-input" => "Needs Your Input",
             "sovr" => "SOVR",
+            "osmosis-sell" => "Sell OPT on Osmosis",
+            "opt-sell-plan" => "OPT Sell Plan",
             "my-titn" => "My TITN",
             "locks" => "Locks & Staking",
             "counterparties" => "Counterparties",
@@ -3645,6 +3647,12 @@ public static partial class WebDashboard
                 break;
             case "sovr":
                 AppendSovrPage(sb);
+                break;
+            case "osmosis-sell":
+                AppendOsmosisSellPage(sb);
+                break;
+            case "opt-sell-plan":
+                AppendSellPlanPage(sb);
                 break;
             case "my-titn":
                 AppendTitnCard(sb);

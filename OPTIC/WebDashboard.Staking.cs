@@ -127,6 +127,7 @@ public static partial class WebDashboard
         MapChains(app);
         MapPortfolioHistory(app);
         MapSovr(app);
+        MapOsmosisSell(app);
         app.MapGet("/api/staking/positions", async (HttpContext ctx) =>
         {
             var address = AddressParam(ctx);
