@@ -89,6 +89,45 @@ public static partial class WebDashboard
         return rows.Where(r => r.Item2 > 0.000001m).ToList();
     }
 
+    // A REST query answered from the chain's state at an earlier block (the node keeps recent history).
+    static async Task<JsonNode?> SovrGetAtAsync(string path, long height, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, SovrLcds[0] + path);
+        req.Headers.Add("x-cosmos-block-height", height.ToString(CultureInfo.InvariantCulture));
+        using var res = await EvmHttp.SendAsync(req, ct);
+        res.EnsureSuccessStatusCode();
+        return JsonNode.Parse(await res.Content.ReadAsStringAsync(ct));
+    }
+
+    // The staking reward rate, measured: Sovren mints nothing on a schedule (no x/mint), so rewards are fees and the staking
+    // share of network revenue. Every reward pays the community tax into the community pool, so the pool's growth over the
+    // last 7 days (or 1 day, if the node no longer has a week of history), divided by the tax rate, is what all stakers earned.
+    // That per year over today's staked amount is the gross rate; less the validators' typical commission, a delegator's.
+    static async Task<object?> SovrRewardRateAsync(long height, DateTime now, decimal bonded, decimal? communityTax, decimal commission, CancellationToken ct)
+    {
+        if (communityTax is not > 0m || bonded <= 0 || height <= 0) return null;
+        static decimal Pool(JsonNode? n) => SovrCoins(n?["pool"]);
+        var poolNow = Pool(await SovrGetAtAsync("/cosmos/distribution/v1beta1/community_pool", height, ct));
+        foreach (var days in new[] { 7, 1 })
+        {
+            try
+            {
+                var back = height - days * 14_400L; // about 6-second blocks
+                var then = await SovrGetAtAsync("/cosmos/distribution/v1beta1/community_pool", back, ct);
+                var block = await SovrGetAsync($"/cosmos/base/tendermint/v1beta1/blocks/{back}", ct);
+                if (!DateTime.TryParse(block?["block"]?["header"]?["time"]?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var t0)) continue;
+                var span = (decimal)(now - t0).TotalDays;
+                var earned = (poolNow - Pool(then)) / communityTax.Value;
+                if (span <= 0.1m || earned <= 0) continue;
+                var perYear = earned / span * 365m;
+                var gross = perYear / bonded;
+                return new { grossApr = Math.Round(gross, 4), netApr = Math.Round(gross * (1 - commission), 4), commission, perYear = Math.Round(perYear, 2), days = Math.Round(span, 1), from = t0 };
+            }
+            catch (HttpRequestException) { }
+        }
+        return null;
+    }
+
     static (DateTime At, object Data)? _sovrOverview;
     static readonly SemaphoreSlim SovrOverviewGate = new(1, 1);
 
@@ -126,6 +165,16 @@ public static partial class WebDashboard
                     jailed = v["jailed"]?.GetValue<bool>() ?? false,
                 })
                 .OrderByDescending(v => v.tokens).ToList();
+            var communityTaxRate = decimal.TryParse(dist.Result?["params"]?["community_tax"]?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var ctr) ? ctr : (decimal?)null;
+            var commissions = validators.Where(v => !v.jailed).Select(v => v.commission).OrderBy(c => c).ToList();
+            var typicalCommission = commissions.Count > 0 ? commissions[commissions.Count / 2] : 0.1m;
+            object? rewardRate = null;
+            try
+            {
+                if (long.TryParse(header?["height"]?.ToString(), out var hNow) && DateTime.TryParse(header?["time"]?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var tNow))
+                    rewardRate = await SovrRewardRateAsync(hNow, tNow, bonded, communityTaxRate, typicalCommission, ct);
+            }
+            catch (HttpRequestException) { }
             static long Secs(JsonNode? n) => long.TryParse(n?.ToString()?.TrimEnd('s'), NumberStyles.Integer, CultureInfo.InvariantCulture, out var x) ? x : 0;
             var proposals = (gov.Result?["proposals"] as JsonArray ?? new()).OfType<JsonObject>().Select(p => new
             {
@@ -168,7 +217,8 @@ public static partial class WebDashboard
                     validatorCount = validators.Count,
                     unbondingDays = Secs(sparams.Result?["params"]?["unbonding_time"]) / 86400m,
                     maxValidators = sparams.Result?["params"]?["max_validators"]?.ToString(),
-                    communityTax = decimal.TryParse(dist.Result?["params"]?["community_tax"]?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var ctax) ? ctax : (decimal?)null,
+                    communityTax = communityTaxRate,
+                    rewardRate,
                 },
                 validators,
                 lockup = lparams.Result?["params"] is JsonObject lp ? new

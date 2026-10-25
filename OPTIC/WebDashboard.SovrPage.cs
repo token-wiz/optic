@@ -84,7 +84,9 @@ public static partial class WebDashboard
                     }
                     // Your SOVR.
                     const mine = j.mine || [];
-                    $('sv-mine-note').innerHTML = mine.length ? '' : 'Add your sovr1... address on <a href="/page/my-wallets">My Wallets</a> to see your SOVR here.';
+                    const rate = o.staking && o.staking.rewardRate;
+                    const held = mine.reduce((n, m) => n + (m.error ? 0 : m.liquid + m.staked), 0);
+                    $('sv-mine-note').innerHTML = mine.length ? (rate && held > 0 ? `Staking ${n2(held)} SOVR at about ${(rate.netApr * 100).toFixed(1)}% would earn roughly ${n2(held * rate.netApr)} SOVR a year${price != null ? ` (${usd(held * rate.netApr * price)} at today’s price)` : ''}. Unstaking takes ${n0(o.staking.unbondingDays)} days.` : '') : 'Add your sovr1... address on <a href="/page/my-wallets">My Wallets</a> to see your SOVR here.';
                     let tq = 0, tv = 0;
                     $('sv-mine').innerHTML = mine.map(m => {
                         if (m.error) return `<tr><td>${esc(m.label || m.address)}</td><td colspan="6" style="color: var(--text-secondary);">Could not read: ${esc(m.error)}</td></tr>`;
@@ -104,7 +106,9 @@ public static partial class WebDashboard
                     }
                     // Staking and lockup.
                     const lk = o.lockup, q = o.claimQueue;
+                    const rr = st.rewardRate;
                     $('sv-staking').innerHTML =
+                        (rr ? tile('Staking reward (estimate)', `about ${(rr.netApr * 100).toFixed(1)}% a year`, `after ${(rr.commission * 100).toFixed(0)}% validator commission (${(rr.grossApr * 100).toFixed(1)}% before) · measured over the last ${rr.days} days; it varies with network fees and revenue`) : '') +
                         tile('Unstaking period', st.unbondingDays ? n0(st.unbondingDays) + ' days' : '–', 'staked SOVR takes this long to become spendable') +
                         (st.communityTax != null ? tile('Community tax', (st.communityTax * 100).toFixed(0) + '%', 'of staking rewards, to the community pool') : '') +
                         (lk ? tile('Lockup', n0(lk.lockDays) + ' days', `then ${n0(lk.unbondingDays)}-day unbonding; vesting over ${n0(lk.vestingDays)} days${Number(lk.earlyUnlockPenaltyBps) ? ` · early unlock penalty ${(lk.earlyUnlockPenaltyBps / 100).toFixed(2)}%` : ''}`) : '') +
