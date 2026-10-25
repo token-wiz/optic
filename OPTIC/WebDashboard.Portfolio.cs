@@ -39,7 +39,7 @@ public static partial class WebDashboard
                 const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', optio: 'Optio' };
                 // One request per page for data the Portfolio and My Wallets cards both read.
                 window.opticGet = window.opticGet || (() => { const c = {}; return (u) => c[u] || (c[u] = fetch(u).then(r => r.ok ? r.json() : null)); })();
-                const ORDER = ['OPT', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'BNB', 'USDC', 'USDT', 'OSMO'];
+                const ORDER = ['USDC', 'OPT', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'BNB', 'USDT', 'OSMO']; // cash (USDC) first
                 const start = async () => {
                     const W = window.opticWallets;
                     if (!W) { setTimeout(start, 200); return; }

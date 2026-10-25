@@ -80,6 +80,57 @@ public static partial class WebDashboard
         ("bsc", NilaToken, "NILA"), ("bsc", BscUsdt, "USDT"), ("bsc", BscUsdc, "USDC"),
     };
 
+    static readonly Dictionary<string, string[]> EvmPublicRpcs = new()
+    {
+        ["ethereum"] = new[] { "https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com" },
+        ["base"] = new[] { "https://mainnet.base.org", "https://base-rpc.publicnode.com" },
+        ["arbitrum"] = new[] { "https://arb1.arbitrum.io/rpc", "https://arbitrum-one-rpc.publicnode.com" },
+    };
+
+    // One JSON-RPC call on a chain, trying each public endpoint; null when none answers.
+    static async Task<string?> EvmRpcHexAsync(string chain, string method, JsonArray prms, CancellationToken ct)
+    {
+        if (!EvmPublicRpcs.TryGetValue(chain, out var urls)) return null;
+        foreach (var url in urls)
+        {
+            try
+            {
+                var body = new JsonObject { ["jsonrpc"] = "2.0", ["id"] = 1, ["method"] = method, ["params"] = prms.DeepClone() };
+                using var resp = await EvmHttp.PostAsync(url, new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), ct);
+                if (!resp.IsSuccessStatusCode) continue;
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                if (doc.RootElement.TryGetProperty("result", out var r) && r.ValueKind == JsonValueKind.String && r.GetString()!.StartsWith("0x", StringComparison.Ordinal) && r.GetString()!.Length > 2)
+                    return r.GetString();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+        }
+        return null;
+    }
+
+    static readonly Dictionary<string, int> _tokenDecimals = new();
+
+    // Replaces the explorer's ETH and tracked-token balances with what the chain reports now (each value only when read).
+    static async Task OverrideWithChainBalancesAsync(string chain, string address, JsonObject row, CancellationToken ct)
+    {
+        var owner = "000000000000000000000000" + address[2..];
+        if (await EvmRpcHexAsync(chain, "eth_getBalance", new JsonArray(address, "latest"), ct) is { } wei)
+            row["ETH"] = Scale(HexInt(wei), 18);
+        foreach (var t in EvmBalanceTokens.Where(t => t.Chain == chain))
+        {
+            var key = chain + "|" + t.Token;
+            if (!_tokenDecimals.TryGetValue(key, out var dec))
+            {
+                if (await EvmRpcHexAsync(chain, "eth_call", new JsonArray(new JsonObject { ["to"] = t.Token, ["data"] = "0x313ce567" }, "latest"), ct) is not { } dh) continue;
+                _tokenDecimals[key] = dec = (int)HexInt(dh);
+            }
+            if (await EvmRpcHexAsync(chain, "eth_call", new JsonArray(new JsonObject { ["to"] = t.Token, ["data"] = "0x70a08231" + owner }, "latest"), ct) is { } bal)
+            {
+                var v = Scale(HexInt(bal), dec);
+                if (v > 0m) row[t.Symbol] = v; else row.Remove(t.Symbol);
+            }
+        }
+    }
+
     // Balances of ETH, BNB, USDC, USDT, TITN, TGT, NILA and PATRIOT on Ethereum, Arbitrum, Base and BNB Chain for the user's saved 0x... wallets (10-minute cache).
     static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null, List<(string Address, string Label)>? gonkaWallets = null)
     {
@@ -143,6 +194,9 @@ public static partial class WebDashboard
                         }
                     }
                     catch (HttpRequestException) { }
+                    // The explorer's stored balances can lag far behind (a token bought and sent on minutes later can still
+                    // show as held), so the chain itself has the last word: ETH and every tracked token read over public RPC.
+                    await OverrideWithChainBalancesAsync(chain, w.Address, row, ct);
                     cached[chain] = row;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);

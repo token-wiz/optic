@@ -28,8 +28,11 @@ using Microsoft.AspNetCore.Http;
 //     rewards) and their TITN costs its value that day.
 //   - Anything else (plain transfers to or from other addresses) is listed as not classified and never guessed; a
 //     token received without a known cost is kept as a lot with unknown cost.
-// Per-transaction answers from the user live in odata/users/<user>/titn-labels.json:
-//   { "<txHash>": { "kind": "purchase|sale|income|gift-out|own|ignore", "usd": 12.34 or null, "note": "..." } }
+// Per-transaction answers from the user live in odata/users/<user>/titn-labels.json (saved from Needs Your Input):
+//   { "<txHash>": { "kind": "purchase|sale|income|gift-in|gift-out|own|ignore", "usd": 12.34 or null, "note": "..." } }
+//   purchase / income / gift-in: acquired (cost = usd; income without usd = that day's value; gift-in usd = the giver's basis).
+//   sale: disposed for usd (or that day's value). gift-out / own (sent): leaves the wallets tracked here, not a sale.
+//   own (received): acquired at usd, else unknown cost. ignore: left out.
 public static partial class WebDashboard
 {
     const string MergeTgtContract = "0xfa486b0e67ca52f5f9e5adf0b79b6cfeb339b6e0";
@@ -91,6 +94,32 @@ public static partial class WebDashboard
             var labels = File.Exists(labelsPath) ? JsonNode.Parse(await File.ReadAllTextAsync(labelsPath, ctx.RequestAborted)) as JsonObject ?? new() : new JsonObject();
             try { return VJson(await BuildTitnLotsAsync(wallets, labels, ctx.Request.Query["refresh"] == "1", ctx.RequestAborted)); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not build your TGT / TITN / ETH lots: " + ex.Message, 502); }
+        });
+        // Your answer for one transaction that could not be classified: { tx, kind, usd?, note? }; kind null clears it.
+        app.MapPost("/api/titn/labels", async (HttpContext ctx) =>
+        {
+            var body = await JsonNode.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted) as JsonObject;
+            var tx = body?["tx"]?.ToString()?.Trim().ToLowerInvariant() ?? "";
+            if (!System.Text.RegularExpressions.Regex.IsMatch(tx, "^0x[0-9a-f]{64}$")) return VError("tx must be a transaction hash.");
+            var kind = body?["kind"]?.ToString();
+            if (kind is not (null or "" or "purchase" or "sale" or "income" or "gift-in" or "gift-out" or "own" or "ignore")) return VError("Unknown answer.");
+            decimal? usd = body?["usd"] is JsonValue uv && uv.TryGetValue<decimal>(out var ud) && ud >= 0 ? ud : null;
+            var note = (body?["note"]?.ToString() ?? "").Trim();
+            if (note.Length > 500) note = note[..500];
+            var labelsPath = Path.Combine(DashboardAuth.UserDataDir(ctx), "titn-labels.json");
+            var labels = File.Exists(labelsPath) ? JsonNode.Parse(await File.ReadAllTextAsync(labelsPath, ctx.RequestAborted)) as JsonObject ?? new() : new JsonObject();
+            if (string.IsNullOrEmpty(kind)) labels.Remove(tx);
+            else labels[tx] = new JsonObject { ["kind"] = kind, ["usd"] = usd, ["note"] = note, ["answeredUtc"] = DateTime.UtcNow };
+            Directory.CreateDirectory(Path.GetDirectoryName(labelsPath)!);
+            await File.WriteAllTextAsync(labelsPath, labels.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), ctx.RequestAborted);
+            return VJson(new { tx, kind, usd, note });
+        });
+        app.MapGet("/api/titn/labels", async (HttpContext ctx) =>
+        {
+            var labelsPath = Path.Combine(DashboardAuth.UserDataDir(ctx), "titn-labels.json");
+            var labels = File.Exists(labelsPath) ? JsonNode.Parse(await File.ReadAllTextAsync(labelsPath, ctx.RequestAborted)) as JsonObject ?? new() : new JsonObject();
+            labels.Remove("_settings");
+            return Results.Text(labels.ToJsonString(), "application/json");
         });
         // Your choice of TGT→TITN migration treatment, kept with your per-transaction answers.
         app.MapPost("/api/titn/settings", async (HttpContext ctx) =>
@@ -438,6 +467,33 @@ public static partial class WebDashboard
                 }
             }
 
+            // Applies the user's answer for a transaction to one asset that moved in it. False when there is no answer.
+            bool Answered(EvmRow r, string asset, decimal qty, bool inbound, decimal? px)
+            {
+                if (labels[r.Tx] is not JsonObject label) return false;
+                var kind = label["kind"]?.ToString() ?? "";
+                decimal? usd = label["usd"] is JsonValue uv && uv.TryGetValue<decimal>(out var ud) ? ud : null;
+                var note = label["note"]?.ToString() ?? "";
+                string How(string fallback) => string.IsNullOrEmpty(note) ? fallback : fallback + ": " + note;
+                if (inbound)
+                {
+                    if (kind == "purchase") Acquire(r.Wallet, asset, qty, usd, r.Time, How("Bought (your answer)"));
+                    else if (kind == "income") Acquire(r.Wallet, asset, qty, usd ?? (px is { } p0 ? qty * p0 : null), r.Time, How("Income received (your answer)"));
+                    else if (kind == "gift-in") Acquire(r.Wallet, asset, qty, usd, r.Time, How("Gift received; cost is the giver's basis (your answer)"));
+                    else if (kind == "own") Acquire(r.Wallet, asset, qty, usd, r.Time, How("From your own wallet or account (your answer)"));
+                    else if (kind != "ignore") return false;
+                    if (kind is "purchase" or "gift-in" && usd is null) notes.Add($"Cost not entered yet for {qty:N2} {asset} received {r.Time:yyyy-MM-dd}{(note == "" ? "" : " (" + note + ")")}.");
+                }
+                else
+                {
+                    if (kind == "sale") Dispose(r.Wallet, r.Chain, asset, qty, usd ?? (px is { } p1 ? qty * p1 : null), r.Time, r.Tx, How("Sale (your answer)"));
+                    else if (kind is "gift-out" or "own") Take(r.Wallet, asset, qty);
+                    else if (kind != "ignore") return false;
+                }
+                if (label["provisional"] is JsonValue pv0 && pv0.TryGetValue<bool>(out var prov) && prov) notes.Add($"Provisional cost for {qty:N2} {asset} received {r.Time:yyyy-MM-dd}: {note}.");
+                return true;
+            }
+
             // Moves lots between the user's wallets (bridges and transfers); 'arrived' can be less than 'sent' (a bridge fee).
             void Move(string from, string to, string asset, decimal sent, decimal arrived, string note)
             {
@@ -494,10 +550,11 @@ public static partial class WebDashboard
                             continue;
                         }
                         if (payHere is not null && payHere.Asset == "USD") { Dispose(r.Wallet, r.Chain, s, q, q - payHere.FeeHalf, r.Time, r.Tx, $"{s} paid to a cross-chain solver for a purchase"); continue; }
-                        if (leg.Plain) { unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = s, qty = q, direction = "out", counterparty = string.Join(",", cps), valueThatDay = (decimal?)q }); continue; }
+                        if (leg.Plain) { if (!Answered(r, s, q, false, 1m)) unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = s, qty = q, direction = "out", counterparty = string.Join(",", cps), valueThatDay = (decimal?)q }); continue; }
                         Dispose(r.Wallet, r.Chain, s, q, q, r.Time, r.Tx, $"{s} spent in a contract transaction");
                     }
                     else if (cps.Overlaps(CrossChainSolvers)) Acquire(r.Wallet, s, q, q, r.Time, "Delivered by a cross-chain solver; cost $1.00");
+                    else if (leg.Plain && Answered(r, s, q, true, 1m)) { } // e.g. a MoonPay purchase: cost = the cash paid, fees included
                     else Acquire(r.Wallet, s, q, q, r.Time, leg.Plain ? $"Bought or received from {string.Join(",", cps)} (MoonPay, Coinbase, an exchange or a swap; not income); cost $1.00" : "Received in a contract transaction; cost $1.00");
                 }
             }
@@ -533,24 +590,12 @@ public static partial class WebDashboard
 
                 var ethNet = r.EthIn - r.EthOut;
                 var ethDone = false;
-                var label = labels[r.Tx] as JsonObject;
                 foreach (var leg in r.Legs.Values.Where(l => Math.Abs(l.Qty) >= 0.000001m))
                 {
                     var asset = leg.Asset; var qty = Math.Abs(leg.Qty); var inbound = leg.Qty > 0;
                     var cps = leg.Counterparties;
                     var px = AssetPx(asset, r.Time);
-                    if (label is not null)
-                    {
-                        var kind = label["kind"]?.ToString() ?? "";
-                        decimal? usd = label["usd"] is JsonValue uv && uv.TryGetValue<decimal>(out var ud) ? ud : null;
-                        var note = label["note"]?.ToString() ?? "";
-                        if (kind == "purchase" || kind == "income") Acquire(r.Wallet, asset, qty, kind == "income" && usd is null && px is { } p0 ? qty * p0 : usd, r.Time, string.IsNullOrEmpty(note) ? kind : note);
-                        else if (kind == "sale") Dispose(r.Wallet, r.Chain, asset, qty, usd ?? (px is { } p1 ? qty * p1 : null), r.Time, r.Tx, string.IsNullOrEmpty(note) ? "Sale (your label)" : note);
-                        else if (kind == "gift-out") Take(r.Wallet, asset, qty);
-                        if (label["provisional"] is JsonValue pv0 && pv0.TryGetValue<bool>(out var prov) && prov) notes.Add($"Provisional cost for {qty:N2} {asset} received {r.Time:yyyy-MM-dd}: {note}.");
-                        if (kind == "purchase" && usd is null) notes.Add($"Cost not entered yet for {qty:N0} {asset} received {r.Time:yyyy-MM-dd} ({note}).");
-                        continue;
-                    }
+                    if (Answered(r, asset, qty, inbound, px)) continue;
                     // NILA staking: a claimReward pays the reward (income at that day's value); a withdraw returns your stake.
                     if (inbound && cps.Contains(NilaStakingContract) && r.Method == NilaClaimSelector)
                     {
@@ -750,7 +795,7 @@ public static partial class WebDashboard
                             Take(r.Wallet, nat, q);
                             movedToExchange.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = nat, qty = q, to = r.EthOutTo, valueThatDay = (decimal?)usd });
                         }
-                        else unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = nat, qty = q, direction = "out", counterparty = r.EthOutTo, valueThatDay = (decimal?)usd });
+                        else if (!Answered(r, nat, q, false, q > 0 ? usd / q : null)) unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = nat, qty = q, direction = "out", counterparty = r.EthOutTo, valueThatDay = (decimal?)usd });
                     }
                     else
                     {
@@ -764,6 +809,7 @@ public static partial class WebDashboard
                     var fromOwn = r.EthInFrom.FirstOrDefault(own.Contains);
                     var mOut = midgard.FirstOrDefault(m => !usedMidgard.Contains(m) && m.Outs.Any(o => o.Address == r.Wallet && o.Asset is "ETH.ETH" or "ARB.ETH" or "BASE.ETH" && Math.Abs(o.Amount - q) <= Math.Max(0.00002m, q * 0.01m)) && (r.Time - m.Time).TotalDays is > -0.1 and < 10);
                     if (fromOwn is not null) Acquire(r.Wallet, nat, q, usd, r.Time, "Received from your own wallet (not matched to its send)");
+                    else if (Answered(r, nat, q, true, q > 0 ? usd / q : null)) { } // your answer, e.g. a MoonPay purchase at the cash paid
                     else if (mOut is not null)
                     {
                         usedMidgard.Add(mOut);

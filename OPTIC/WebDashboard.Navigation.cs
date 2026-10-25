@@ -23,6 +23,7 @@ public static partial class WebDashboard
         new("Taxes", new NavPage[]
         {
             new("tax-report", "Tax Report", "Income, sales and losses for one tax year"),
+            new("needs-input", "Needs Your Input", "Transfers and costs OPTIC won't guess, with a place to answer each"),
             new("liquidity-review", "Liquidity & Distribution Review", "Receipt-level market evidence and reviewed values"),
         }),
         new("Market", new NavPage[]

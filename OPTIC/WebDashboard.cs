@@ -2302,6 +2302,7 @@ public static partial class WebDashboard
             "sell-planner" => "Sell Planner",
             "fifo-sales" => "Sales & Lots",
             "my-wallets" => "My Wallets",
+            "needs-input" => "Needs Your Input",
             "my-titn" => "My TITN",
             "locks" => "Locks & Staking",
             "counterparties" => "Counterparties",
@@ -3631,6 +3632,9 @@ public static partial class WebDashboard
                 break;
             case "my-wallets":
                 AppendMyWalletsCard(sb);
+                break;
+            case "needs-input":
+                AppendNeedsInputCard(sb);
                 break;
             case "my-titn":
                 AppendTitnCard(sb);
@@ -6320,7 +6324,11 @@ public static partial class WebDashboard
                                 if (v != null && [...el.options].some(o => o.value === v)) el.value = v;
                             }
                             if (params.get('blockage')) blockageInput.value = params.get('blockage');
-                            addressInput.value = params.get('address') || window.opticWallets.primary() || '';
+                            addressInput.value = params.get('address') || (MODE === 'report' ? '' : window.opticWallets.primary() || '');
+                            if (MODE === 'report') {
+                                addressInput.placeholder = 'All my wallets, or paste one optio1... / osmo1... address';
+                                document.querySelector('label[for=""tr-address""]').textContent = 'Wallet address (leave blank for all your wallets)';
+                            }
                             if (MODE !== 'report') {
                                 // Sell Planner works on the current year; FIFO Sales on every year.
                                 yearSelect.value = String(currentYear);
@@ -6358,6 +6366,20 @@ public static partial class WebDashboard
 
                             let data = null, labels = {};
                             const keyOf = (e) => `${e.txHash}|${e.direction}|${e.counterparty}`;
+                            // All-wallets report: every saved Optio wallet and Osmosis account, narrowed by the Network filter.
+                            const reportWallets = () => {
+                                if (!data) return [];
+                                const net = $('tr-network').value;
+                                return [data.dist.address, ...(data.others || []).map(o => o.address)]
+                                    .filter(a => !net || (net === 'optio' && a.startsWith('optio1')) || (net === 'osmosis' && a.startsWith('osmo1')));
+                            };
+                            // A row's labels live with the wallet it happened in: rows from another wallet carry it in their key (wallet::key).
+                            const rowKey = (x) => (x.w && data && x.w !== data.dist.address ? x.w + '::' : '') + keyOf(x.e);
+                            const splitKey = (k) => { const i = k.indexOf('::'); return i < 0 ? [data.dist.address, k] : [k.slice(0, i), k.slice(i + 2)]; };
+                            const labelsOf = (a) => a === data.dist.address ? labels : ((data.others || []).find(o => o.address === a) || {}).labels || {};
+                            const walletName = (a) => window.opticWallets.label(a) || short(a);
+                            // Which of your wallets a row is from, shown when the report covers all of them.
+                            const wTag = (x) => data && data.all && x.w ? `<div style=""font-size: 11px; color: var(--text-secondary);"">${esc(walletName(x.w))}</div>` : '';
 
                             const ownWallets = () => new Set(window.opticWallets.listAll().map(w => w.a));
                             const isExchange = (a) => !!window.opticWallets.exchange(a) || a === data.flows.depositCollector || a === data.flows.hotWallet;
@@ -6536,8 +6558,10 @@ public static partial class WebDashboard
                                 const methods = { quotedAcc: window.opticMarket.accessible(days, flows, 'quoted'), next: window.opticMarket.accessible(days, flows, 'next'), dlom: rule === 'dlom' ? accSel : window.opticMarket.accessible(days, flows, 'dlom') };
 
                                 // Your saved wallets are processed together, wallet by wallet: OPT moved between them keeps its lots
-                                // (basis and acquisition dates). Only the selected wallet's activity is reported below.
+                                // (basis and acquisition dates). Reported below: the selected wallet, or (all wallets) every wallet on
+                                // the network chosen above.
                                 const selAddr = dist.address;
+                                const inScope = (addr) => data.all ? reportWallets().includes(addr) : addr === selAddr;
                                 const walletsData = [{ address: selAddr, dist, ledger, labels, reviewed: data.reviewed }]
                                     .concat((data.others || []).map(o => ({ ...o, reviewed: data.reviewedOthers ? data.reviewedOthers[o.address] : null })));
                                 const processed = new Set(walletsData.map(w => w.address));
@@ -6552,9 +6576,9 @@ public static partial class WebDashboard
                                         if (e.direction !== 'in') continue;
                                         if (e.category === 'distribution') {
                                             const k = kindBy.get(e.txHash) || { kind: 'node', inferred: true };
-                                            list.push({ e, kind: k.kind, inferred: k.inferred });
-                                        } else if (e.category === 'reward') list.push({ e, kind: 'staking', inferred: false, module: true });
-                                        else if (e.category === 'wallet' && treatment(e, w.labels).kind === 'income') list.push({ e, kind: 'other', inferred: false });
+                                            list.push({ w: w.address, e, kind: k.kind, inferred: k.inferred });
+                                        } else if (e.category === 'reward') list.push({ w: w.address, e, kind: 'staking', inferred: false, module: true });
+                                        else if (e.category === 'wallet' && treatment(e, w.labels).kind === 'income') list.push({ w: w.address, e, kind: 'other', inferred: false });
                                     }
                                     const dayTotal = new Map();
                                     for (const x of list) { const d = fmtDay(x.e.timeUtc); dayTotal.set(d, (dayTotal.get(d) || 0) + x.e.amountOpt); }
@@ -6582,7 +6606,9 @@ public static partial class WebDashboard
                                     return list;
                                 };
                                 const incomeByWallet = new Map(walletsData.map(w => [w.address, incomeOf(w)]));
-                                const income = incomeByWallet.get(selAddr);
+                                const income = data.all
+                                    ? walletsData.filter(w => inScope(w.address)).flatMap(w => incomeByWallet.get(w.address)).sort((x, y) => Date.parse(x.e.timeUtc) - Date.parse(y.e.timeUtc))
+                                    : incomeByWallet.get(selAddr);
                                 const incomeKey = (addr, e) => addr + '#' + keyOf(e);
                                 const incomeBy = new Map([...incomeByWallet].flatMap(([addr, xs]) => xs.map(x => [incomeKey(addr, x.e), x])));
                                 // Price per OPT used for proceeds and transfers when the user gave none: the same fair market
@@ -6661,7 +6687,7 @@ public static partial class WebDashboard
                                 // By time (the Optio and Osmosis chains number blocks differently); same block: receipts, sends, then own receipts.
                                 events.sort((x, y) => (Date.parse(x.e.timeUtc) - Date.parse(y.e.timeUtc)) || (order(x) - order(y)) || (x.e.height - y.e.height));
                                 for (let { w, e, own } of events) {
-                                    const isSel = w.address === selAddr;
+                                    const isSel = inScope(w.address);
                                     const lots = lotsBy.get(w.address);
                                     const t = e.category === 'wallet' ? treatment(e, w.labels) : null;
                                     if (e.direction === 'in') {
@@ -6674,7 +6700,7 @@ public static partial class WebDashboard
                                             const parts = q && q.length ? q.shift() : null;
                                             if (parts) for (const p of parts) addLot(lots, e.timeUtc, { id: p.id, qty: p.qty, unit: p.cost == null ? null : p.cost / p.qty, lossUnit: p.lossCost == null ? null : p.lossCost / p.qty, time: p.time, source: p.source === 'gift' ? 'gift' : 'own-wallet' });
                                             else addLot(lots, e.timeUtc, { id: lotId(w, e), qty: e.amountOpt, unit: null, time: null, source: 'own-wallet' });
-                                            if (isSel && inYear(e.timeUtc)) transfersIn.push({ e, t, carried: parts ? (parts.some(p => p.cost == null) ? null : sum(parts, p => p.cost)) : null, carriedFound: !!parts });
+                                            if (isSel && inYear(e.timeUtc)) transfersIn.push({ w: w.address, e, t, carried: parts ? (parts.some(p => p.cost == null) ? null : sum(parts, p => p.cost)) : null, carriedFound: !!parts });
                                             continue;
                                         }
                                         let autoRepaid = 0;
@@ -6685,7 +6711,7 @@ public static partial class WebDashboard
                                             if (autoRepaid > EPS) { ln.owed -= autoRepaid; ln.repaid += autoRepaid; ln.auto += autoRepaid; } else autoRepaid = 0;
                                         }
                                         if (t.kind === 'loan-back') { const ln = loanOf(e.counterparty); ln.repaid += e.amountOpt; ln.owed = Math.max(0, ln.owed - e.amountOpt); }
-                                        if (isSel && inYear(e.timeUtc)) transfersIn.push({ e, t, autoRepaid });
+                                        if (isSel && inYear(e.timeUtc)) transfersIn.push({ w: w.address, e, t, autoRepaid });
                                         if (t.info.skip) continue;
                                         if (autoRepaid > EPS) { if (e.amountOpt - autoRepaid <= EPS) continue; e = { ...e, amountOpt: e.amountOpt - autoRepaid }; }
                                         if (t.kind === 'unclassified') { addLot(lots, e.timeUtc, { id: lotId(w, e), qty: e.amountOpt, unit: null, time: e.timeUtc, source: 'unclassified' }); continue; }
@@ -6697,7 +6723,7 @@ public static partial class WebDashboard
                                             const basis = t.usd ?? 0;
                                             const lossBasis = dayValue == null ? basis : Math.min(basis, dayValue);
                                             addLot(lots, e.timeUtc, { id: lotId(w, e), qty: e.amountOpt, unit: basis / e.amountOpt, lossUnit: lossBasis / e.amountOpt, time: t.date ? t.date + 'T00:00:00Z' : e.timeUtc, source: 'gift' });
-                                            if (isSel && inYear(e.timeUtc)) gifts.push({ e, t, dayValue, basis, basisKnown: t.usd != null });
+                                            if (isSel && inYear(e.timeUtc)) gifts.push({ w: w.address, e, t, dayValue, basis, basisKnown: t.usd != null });
                                             continue;
                                         }
                                         const cost = t.usd != null ? t.usd : quotedValue;
@@ -6707,14 +6733,14 @@ public static partial class WebDashboard
                                     if (e.category === 'module') continue; // delegation or lock: still yours
                                     if (e.category === 'fee') {
                                         take(w.address, e.amountOpt);
-                                        if (isSel) { feeOpt += e.amountOpt; if (inYear(e.timeUtc)) feesYear.push({ e, value: unitPrice(e) == null ? null : e.amountOpt * unitPrice(e) }); }
+                                        if (isSel) { feeOpt += e.amountOpt; if (inYear(e.timeUtc)) feesYear.push({ w: w.address, e, value: unitPrice(e) == null ? null : e.amountOpt * unitPrice(e) }); }
                                         continue;
                                     }
                                     // Shown in the year it was sent, and in the year of its sale date if that is later.
                                     const counts = isSel && (inYear(e.timeUtc) || (t.date && inYear(t.date)));
-                                    if (counts) transfersOut.push({ e, t });
+                                    if (counts) transfersOut.push({ w: w.address, e, t });
                                     if (t.kind === 'loan') { const ln = loanOf(e.counterparty); ln.lent += e.amountOpt; ln.owed += e.amountOpt; }
-                                    if (t.info.skip) { if (counts) skipped.push({ e, t }); continue; }
+                                    if (t.info.skip) { if (counts) skipped.push({ w: w.address, e, t }); continue; }
                                     const soldDay = t.date || fmtDay(e.timeUtc);
                                     // The standing order also picks the lots that move between your own wallets (identification covers
                                     // transfers as well as sales, Treas. Reg. §1.1012-1(j)); recorded moves keep their lots.
@@ -6730,12 +6756,12 @@ public static partial class WebDashboard
                                         const k = e.txHash + '|' + e.counterparty;
                                         if (!pending.has(k)) pending.set(k, []);
                                         pending.get(k).push(parts);
-                                        if (counts) carries.push({ e, t, cost, valueWhenSent, toOwn: true });
+                                        if (counts) carries.push({ w: w.address, e, t, cost, valueWhenSent, toOwn: true });
                                         continue;
                                     }
                                     if (!counts) continue;
                                     // Not classified: the OPT left the wallet, but it is not counted as a sale until you say what it was.
-                                    if (t.kind === 'unclassified') { unclassifiedOut.push({ e, t, cost, valueWhenSent }); continue; }
+                                    if (t.kind === 'unclassified') { unclassifiedOut.push({ w: w.address, e, t, cost, valueWhenSent }); continue; }
                                     if (t.info.disposal) {
                                         // Paying for node licenses in the one-time promotion: the amount realized is the value of the licenses
                                         // received, which the user enters. Under receipt-date FMV it is not filled from the disputed OPT price.
@@ -6756,15 +6782,15 @@ public static partial class WebDashboard
                                                 const pr = proceeds * p.qty / e.amountOpt, c = p.cost ?? 0, l = p.lossCost ?? c;
                                                 return pr > c ? pr - c : pr < l ? pr - l : 0;
                                             });
-                                            sales.push({ e, t, qty, soldOn, proceeds: proceeds == null ? null : proceeds * share, cost: gCost, gain, fromGift: g.some(p => p.source === 'gift'), identified: g.some(p => p.identified), identMissing, lotPlan: t.lotPlan,
+                                            sales.push({ w: w.address, e, t, qty, soldOn, proceeds: proceeds == null ? null : proceeds * share, cost: gCost, gain, fromGift: g.some(p => p.source === 'gift'), identified: g.some(p => p.identified), identMissing, lotPlan: t.lotPlan,
                                                 long: isLong(g[0]), parts: g, acquired: dated.length === 0 ? 'Unknown' : dated[0] === dated[dated.length - 1] ? dated[0] : 'Various', acqFrom: dated[0], acqTo: dated[dated.length - 1],
                                                 unknownBasis: g.some(p => p.cost == null), proceedsEstimated: t.usd == null && t.kind !== 'worthless', valueWhenSent: valueWhenSent == null ? null : valueWhenSent * share });
                                         }
                                     } else {
-                                        carries.push({ e, t, cost, valueWhenSent });
+                                        carries.push({ w: w.address, e, t, cost, valueWhenSent });
                                     }
                                 }
-                                const lots = lotsBy.get(selAddr);
+                                const lots = data.all ? walletsData.filter(w => inScope(w.address)).flatMap(w => lotsBy.get(w.address)) : lotsBy.get(selAddr);
                                 const held = sum(lots, l => l.qty), heldCost = sum(lots, l => l.unit == null ? 0 : l.qty * l.unit);
 
                                 // ---------------------------------------------------------------- the year\x27s market
@@ -6856,7 +6882,7 @@ public static partial class WebDashboard
                             };
 
                             const editCells = (x, kinds) => {
-                                const key = keyOf(x.e);
+                                const key = rowKey(x);
                                 const opts = Object.entries(kinds).map(([k, v]) => `<option value=""${k}""${k === x.t.kind ? ' selected' : ''}>${esc(v.label)}</option>`).join('');
                                 const dateCell = x.e.direction === 'out' || x.t.kind === 'gift-in'
                                     ? `<td class=""tr-edit""><input type=""date"" class=""tr-date"" data-key=""${esc(key)}"" data-field=""date"" value=""${esc(x.t.date || '')}"" title=""${x.e.direction === 'out' ? 'Date of the actual sale' : 'When the giver acquired this OPT (your holding period includes theirs)'}""></td>`
@@ -7372,7 +7398,7 @@ public static partial class WebDashboard
                                 const st = a.sales.filter(s => !s.long), lt = a.sales.filter(s => s.long);
                                 const review = a.transfersOut.filter(x => !x.t.reviewed).length + a.transfersIn.filter(x => !x.t.reviewed).length;
 
-                                $('tr-print-header').innerHTML = `<strong>Tax year ${esc(a.year)}</strong> · Wallet ${esc(dist.address)} · Prepared ${esc(new Date().toISOString().slice(0, 16).replace('T', ' '))} UTC with OPTIC · Days with no market: ${esc(RULE_TEXT[a.rule])}${a.blockage ? ` · Blockage discount ${fmtPct(a.blockage)} above market capacity` : ''}`;
+                                $('tr-print-header').innerHTML = `<strong>Tax year ${esc(a.year)}</strong> · ${data.all ? 'All my wallets: ' + esc(reportWallets().map(walletName).join(', ')) : 'Wallet ' + esc(dist.address)} · Prepared ${esc(new Date().toISOString().slice(0, 16).replace('T', ' '))} UTC with OPTIC · Days with no market: ${esc(RULE_TEXT[a.rule])}${a.blockage ? ` · Blockage discount ${fmtPct(a.blockage)} above market capacity` : ''}`;
 
                                 const row = (label, opt, usd, sub, strong) => `<tr${strong ? ' class=""tr-total""' : ''}><td>${label}</td><td class=""amount-cell"">${opt}</td><td class=""amount-cell"">${usd}</td><td style=""text-align: left; color: var(--text-secondary); font-size: 12px;"">${sub || ''}</td></tr>`;
                                 const salesGain = (xs) => sum(xs, s => s.gain);
@@ -7386,7 +7412,7 @@ public static partial class WebDashboard
                                 // Ethereum-side sections are filtered by the network each transaction happened on.
                                 const net = $('tr-network').value;
                                 const evmNet = ['ethereum', 'arbitrum', 'base', 'bsc'].includes(net) ? net : null;
-                                const optNetOk = !net || (net === 'optio' && dist.address.startsWith('optio1')) || (net === 'osmosis' && dist.address.startsWith('osmo1'));
+                                const optNetOk = !net || (data.all ? net === 'optio' || net === 'osmosis' : (net === 'optio' && dist.address.startsWith('optio1')) || (net === 'osmosis' && dist.address.startsWith('osmo1')));
                                 const evmOk = !net || !!evmNet;
                                 const pickChain = (ch) => !evmNet || ch === evmNet;
                                 const focused = single || !optNetOk;
@@ -7433,7 +7459,7 @@ public static partial class WebDashboard
                                             (lt2.length ? row('TGT, TITN and ETH, long-term', '', fmtGain(g(lt2)), `Proceeds ${fmtUsd(sum(lt2, d => d.proceeds))}, cost ${fmtUsd(sum(lt2, d => d.cost))}. Form 8949 Part II (section 4a)`) : '') +
                                             row('Net capital gain or (loss), OPT, TGT, TITN and ETH', '', fmtGain(salesGain(a.sales) + g(tlYear)), 'Schedule D total of sections 4 and 4a', true);
                                     })() : '') +
-                                    row(`Held at the end of ${esc(a.year)}`, fmtOpt(a.held), fmtUsd(a.heldCost), a.hifoFrom ? 'Cost basis of the lots still in this wallet' : 'Cost basis of OPT still in this wallet (FIFO)');
+                                    row(`Held at the end of ${esc(a.year)}`, fmtOpt(a.held), fmtUsd(a.heldCost), a.hifoFrom ? `Cost basis of the lots still in ${data.all ? 'your wallets' : 'this wallet'}` : `Cost basis of OPT still in ${data.all ? 'your wallets' : 'this wallet'} (FIFO)`);
                                 // Automatic adjustments are flagged for review, not treated as an approved safe harbor.
                                 const unreviewedIncome = a.rule === 'reviewed' ? a.incomeYear.filter(x => !x.fmv).length : 0;
                                 const autoRules = [a.rule === 'dlom' ? 'marketability discount' : a.rule === 'next' ? 'next sellable day price' : a.rule === 'last' ? 'last sellable day price' : null, a.blockage > 0 ? 'blockage discount' : null].filter(Boolean);
@@ -7444,7 +7470,7 @@ public static partial class WebDashboard
                                     (review ? `<span class=""tr-flag"">${review} transfer(s) are not classified yet</span> (${fmtOpt(sum(a.transfersOut.filter(x => !x.t.reviewed), x => x.e.amountOpt))} OPT sent, ${fmtOpt(sum(a.transfersIn.filter(x => !x.t.reviewed), x => x.e.amountOpt))} OPT received). They are not counted as sales or purchases; choose what each one was in section 3. <a href=""#tr-section-3"" id=""tr-show-todo"" class=""tr-no-print"">Show them</a> ` : '') +
                                     (a.ownWallets ? `<div style=""font-size: 12px; color: var(--text-secondary); margin-top: 4px;"">Cost basis and acquisition dates move with OPT between your ${a.ownWallets + 1} saved wallets.</div>` : '') +
                                     (noFmv ? `<span class=""tr-flag"">${noFmv} payout(s) have no market price at all</span> (before OPT first traded); they are left out of the totals. ` : '') +
-                                    (ledger.truncated ? '<span class=""tr-flag"">The wallet history hit the 20,000-transaction cap; older transfers may be missing.</span>' : '');
+                                    ((data.all ? [ledger, ...(data.others || []).map(o => o.ledger)].some(l => l && l.truncated) : ledger.truncated) ? '<span class=""tr-flag"">A wallet history hit the 20,000-transaction cap; older transfers may be missing.</span>' : '');
 
                                 // One asset other than OPT: its own summary, and the OPT sections hidden.
                                 document.querySelectorAll('#tr-report .tr-section').forEach(s => { if (!['tr-summary-section', 'tr-titn', 'tr-tlots'].includes(s.id)) s.hidden = !!focused; });
@@ -7502,7 +7528,7 @@ public static partial class WebDashboard
                                     const px = (tl && tl.price) || {};
                                     const fmtQ = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' ? 6 : 2 });
                                     const optNow = (() => { try { const s = (market && (market.series || market.prices || market.daily)) || []; const last = Array.isArray(s) && s.length ? s[s.length - 1] : null; return last ? (last.close ?? last.price ?? last.usd ?? null) : null; } catch (e) { return null; } })();
-                                    const rowsP = single || !optNetOk ? [] : [`<tr><td>OPT</td><td>${esc(dist.address.slice(0, 12))}… and the wallets linked to it</td><td class=""amount-cell"">${fmtOpt(a.held)}</td><td class=""amount-cell"">${fmtUsd(a.heldCost)}</td><td class=""amount-cell"">${optNow ? fmtUsd(a.held * optNow) : '–'}</td></tr>`];
+                                    const rowsP = single || !optNetOk ? [] : [`<tr><td>OPT</td><td>${data.all ? 'Your Optio and Osmosis wallets' : esc(dist.address.slice(0, 12)) + '… and the wallets linked to it'}</td><td class=""amount-cell"">${fmtOpt(a.held)}</td><td class=""amount-cell"">${fmtUsd(a.heldCost)}</td><td class=""amount-cell"">${optNow ? fmtUsd(a.held * optNow) : '–'}</td></tr>`];
                                     for (const h of (evmOk ? tlHeld : [])) if (h.qty > (h.asset === 'ETH' ? 0.000001 : 0.01)) rowsP.push(`<tr><td>${esc(h.asset)}</td><td>Your Ethereum, Arbitrum and Base wallets${h.asset === 'TITN' ? ' (staked and held)' : ''}${evmNet ? ' (all three networks; holdings are kept per wallet)' : ''}</td><td class=""amount-cell"">${fmtQ(h.qty, h.asset)}</td><td class=""amount-cell"">${fmtUsd(h.cost)}${h.unknownCostQty > (h.asset === 'ETH' ? 0.00001 : 0.01) ? ' <span class=""tr-flag"">part unknown</span>' : ''}</td><td class=""amount-cell"">${px[h.asset] ? fmtUsd(h.qty * px[h.asset]) : '–'}</td></tr>`);
                                     if (pick('USDC') && evmOk && !tlHeld.some(h => h.asset === 'USDC')) rowsP.push(`<tr><td>USDC</td><td>Base, Ethereum and Arbitrum</td><td class=""amount-cell"" colspan=""3"" style=""text-align: left; font-size: 12px; color: var(--text-secondary);"">None held at the end of the year. Current balances, including Osmosis, are on <a href=""/page/my-wallets"">My Wallets</a>.</td></tr>`);
                                     if (!tl) rowsP.push(`<tr><td colspan=""5"" style=""font-size: 12px; color: var(--text-secondary);"">Add your Ethereum, Arbitrum or Base wallets on <a href=""/page/my-wallets"">My Wallets</a> to include TITN, TGT, ETH and USDC.</td></tr>`);
@@ -7599,7 +7625,7 @@ public static partial class WebDashboard
                                     <p class=""tr-no-print"">This report currently uses a blockage discount of ${fmtPct(a.blockage)}. ${Math.round(a.blockage * 100) !== L.indicated ? `<button type=""button"" id=""tr-use-disc"" data-pct=""${L.indicated}"">Use ${L.indicated}% as the blockage discount</button>` : ''}</p>`;
                                 const useDisc = $('tr-use-disc');
                                 if (useDisc) useDisc.addEventListener('click', () => { blockageInput.value = useDisc.dataset.pct; rerender(); });
-                                $('tr-evidence-link').innerHTML = `Charts and the full evidence for ${esc(a.year)}: <a href=""/page/liquidity-evidence?address=${encodeURIComponent(dist.address)}&year=${esc(a.year)}"">Liquidity Evidence</a>.`;
+                                $('tr-evidence-link').innerHTML = `Charts and the full evidence for ${esc(a.year)}: <a href=""/page/liquidity-evidence?${data.all ? '' : 'address=' + encodeURIComponent(dist.address) + '&'}year=${esc(a.year)}"">Liquidity Evidence</a>.`;
 
                                 // Transfers.
                                 const outRows = a.transfersOut.map(x => ({ ...x, placeholder: (() => { const p = a.accPrice(x.e); return p == null ? '' : (x.e.amountOpt * p).toFixed(2); })() }));
@@ -7608,10 +7634,10 @@ public static partial class WebDashboard
                                     ? `<span class=""tr-badge todo"">${todoOut + todoIn} not confirmed</span> ${todoOut} sent, ${todoIn} received`
                                     : `<span class=""tr-badge ok"">✓ All ${a.transfersOut.length + a.transfersIn.length} confirmed</span>`;
                                 for (const id of ['tr-out-body', 'tr-in-body']) $(id).closest('table').classList.toggle('tr-only-todo', $('tr-only-todo').checked);
-                                $('tr-out-body').innerHTML = outRows.map(x => `<tr class=""${x.t.reviewed ? '' : 'tr-unconfirmed'}""><td>${fmtTime(x.e.timeUtc)}</td><td>${partyName(x.e.counterparty)}${x.e.memo ? `<div style=""font-size: 11px; color: var(--text-secondary);"" title=""Memo"">${esc(x.e.memo)}</div>` : ''}</td><td class=""amount-cell"">${fmtOpt(x.e.amountOpt)}</td>${editCells(x, OUT_KINDS)}${txCell(x.e.txHash)}</tr>`).join('')
-                                    || '<tr class=""tr-empty""><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No OPT left this wallet in ' + esc(a.year) + '</td></tr>';
+                                $('tr-out-body').innerHTML = outRows.map(x => `<tr class=""${x.t.reviewed ? '' : 'tr-unconfirmed'}""><td>${fmtTime(x.e.timeUtc)}${wTag(x)}</td><td>${partyName(x.e.counterparty)}${x.e.memo ? `<div style=""font-size: 11px; color: var(--text-secondary);"" title=""Memo"">${esc(x.e.memo)}</div>` : ''}</td><td class=""amount-cell"">${fmtOpt(x.e.amountOpt)}</td>${editCells(x, OUT_KINDS)}${txCell(x.e.txHash)}</tr>`).join('')
+                                    || '<tr class=""tr-empty""><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No OPT left ' + (data.all ? 'your wallets' : 'this wallet') + ' in ' + esc(a.year) + '</td></tr>';
                                 const inRows = a.transfersIn.map(x => ({ ...x, placeholder: x.carriedFound ? (x.carried == null ? 'carried (unknown)' : 'carried ' + x.carried.toFixed(2)) : x.t.kind === 'gift-in' ? 'giver basis' : x.t.kind === 'unclassified' ? 'unknown' : x.e.priceUsd != null ? (x.e.amountOpt * x.e.priceUsd).toFixed(2) : '' }));
-                                $('tr-in-body').innerHTML = inRows.map(x => `<tr class=""${x.t.reviewed ? '' : 'tr-unconfirmed'}""><td>${fmtTime(x.e.timeUtc)}</td><td>${partyName(x.e.counterparty)}${x.e.memo ? `<div style=""font-size: 11px; color: var(--text-secondary);"" title=""Memo"">${esc(x.e.memo)}</div>` : ''}${x.autoRepaid > 0 ? `<div style=""font-size: 11px; color: var(--text-secondary);"">${fmtOpt(x.autoRepaid)} OPT counted as loan repayment</div>` : ''}</td><td class=""amount-cell"">${fmtOpt(x.e.amountOpt)}</td>${editCells(x, IN_KINDS)}${txCell(x.e.txHash)}</tr>`).join('')
+                                $('tr-in-body').innerHTML = inRows.map(x => `<tr class=""${x.t.reviewed ? '' : 'tr-unconfirmed'}""><td>${fmtTime(x.e.timeUtc)}${wTag(x)}</td><td>${partyName(x.e.counterparty)}${x.e.memo ? `<div style=""font-size: 11px; color: var(--text-secondary);"" title=""Memo"">${esc(x.e.memo)}</div>` : ''}${x.autoRepaid > 0 ? `<div style=""font-size: 11px; color: var(--text-secondary);"">${fmtOpt(x.autoRepaid)} OPT counted as loan repayment</div>` : ''}</td><td class=""amount-cell"">${fmtOpt(x.e.amountOpt)}</td>${editCells(x, IN_KINDS)}${txCell(x.e.txHash)}</tr>`).join('')
                                     || '<tr class=""tr-empty""><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">None in ' + esc(a.year) + '</td></tr>';
 
                                 // Sales (Form 8949).
@@ -7621,7 +7647,7 @@ public static partial class WebDashboard
                                 const lotText = lmNow?.method === 'hifo' && a.hifoFrom
                                     ? `Lots are tracked wallet by wallet (Rev. Proc. 2024-28). Sales on or after ${fmtDate(a.hifoFrom)} use the highest-cost lots first under a standing order recorded ${esc(String(lmNow.recordedUtc || '').slice(0, 16).replace('T', ' '))} UTC (specific identification, Treas. Reg. §1.1012-1(j)); the lots each of those sales used are recorded with it and are not used again. Earlier sales with no identification use first-in, first-out.`
                                     : 'Cost basis is matched first-in, first-out within this wallet (from 2025 the IRS requires basis to be tracked wallet by wallet, Rev. Proc. 2024-28).';                                $('tr-sales-lede').innerHTML = `${lotText} Each reward\x27s basis is the fair market value reported as income above. Proceeds you didn\x27t enter are the OPT\x27s fair market value that day and are marked *; enter the real figure from your records. ${fmtUsd(sum(a.sales, s => s.proceeds))} proceeds, ${fmtUsd(sum(a.sales, s => s.cost))} cost basis, net ${fmtGain(salesGain(a.sales))}.`;
-                                $('tr-sales-body').innerHTML = a.sales.map(s => `<tr><td>${fmtOpt(s.qty)} OPT</td><td title=""${s.acqFrom ? esc(s.acqFrom + ' to ' + s.acqTo) : ''}"">${esc(s.acquired)}</td><td>${esc(s.soldOn)}</td>
+                                $('tr-sales-body').innerHTML = a.sales.map(s => `<tr><td>${fmtOpt(s.qty)} OPT</td><td title=""${s.acqFrom ? esc(s.acqFrom + ' to ' + s.acqTo) : ''}"">${esc(s.acquired)}</td><td>${esc(s.soldOn)}${wTag(s)}</td>
                                     <td class=""amount-cell"">${fmtUsd(s.proceeds)}${s.proceedsEstimated ? '*' : ''}</td><td class=""amount-cell"">${fmtUsd(s.cost)}${s.unknownBasis ? '<span class=""tr-flag"" title=""Part of this OPT has no known cost (no purchase or reward found for it); counted as $0""> †</span>' : ''}</td>
                                     <td class=""amount-cell${s.gain < -0.004 ? ' tr-loss' : ''}"">${fmtGain(s.gain)}</td><td>${s.long ? 'Long' : 'Short'}</td><td>${esc(OUT_KINDS[s.t.kind].label)}${s.fromGift ? ' <span style=""color: var(--text-secondary);"">(gifted OPT)</span>' : ''}${s.identified ? ' <span class=""tr-badge ok"" title=""Lots identified before the sale (specific identification)"">Identified lots</span>' : ''}${s.identMissing > EPS ? `<div class=""tr-flag"" style=""font-size: 11px;"">${fmtOpt(s.identMissing)} OPT of the identified lots were not held at the time of this sale; FIFO used</div>` : ''}</td><td style=""font-size: 12px; white-space: pre-wrap; max-width: 260px;"">${esc(s.t.note)}</td></tr>`).join('')
                                     + (a.sales.length ? `<tr class=""tr-total""><td>${fmtOpt(sum(a.sales, s => s.qty))} OPT</td><td></td><td></td><td class=""amount-cell"">${fmtUsd(sum(a.sales, s => s.proceeds))}</td><td class=""amount-cell"">${fmtUsd(sum(a.sales, s => s.cost))}</td><td class=""amount-cell"">${fmtGain(salesGain(a.sales))}</td><td colspan=""3""></td></tr>` : '<tr><td colspan=""9"" style=""text-align: center; color: var(--text-secondary);"">No sales in ' + esc(a.year) + '</td></tr>');
@@ -7629,7 +7655,7 @@ public static partial class WebDashboard
                                 $('tr-nodes').hidden = !nodes.length;
                                 $('tr-nodes-body').innerHTML = nodes.map(s => `<tr><td>${fmtTime(s.e.timeUtc)}</td><td>${partyName(s.e.counterparty)}</td><td class=""amount-cell"">${fmtOpt(s.qty)}</td><td class=""amount-cell"">${fmtUsd(s.proceeds)}</td><td class=""amount-cell"">${fmtUsd(s.cost)}</td><td style=""font-size: 12px; white-space: pre-wrap;"">${esc(s.t.note)}</td></tr>`).join('');
                                 $('tr-gifts').hidden = !a.gifts.length;
-                                $('tr-gifts-body').innerHTML = a.gifts.map(g => `<tr><td>${fmtTime(g.e.timeUtc)}</td><td>${partyName(g.e.counterparty)}</td><td class=""amount-cell"">${fmtOpt(g.e.amountOpt)}</td><td class=""amount-cell"">${fmtUsd(g.dayValue)}</td><td class=""amount-cell"">${g.basisKnown ? fmtUsd(g.basis) : '<span class=""tr-flag"">Unknown ($0)</span>'}</td><td>${esc(g.t.date || 'Not entered')}</td><td style=""font-size: 12px; white-space: pre-wrap;"">${esc(g.t.note)}</td></tr>`).join('');
+                                $('tr-gifts-body').innerHTML = a.gifts.map(g => `<tr><td>${fmtTime(g.e.timeUtc)}${wTag(g)}</td><td>${partyName(g.e.counterparty)}</td><td class=""amount-cell"">${fmtOpt(g.e.amountOpt)}</td><td class=""amount-cell"">${fmtUsd(g.dayValue)}</td><td class=""amount-cell"">${g.basisKnown ? fmtUsd(g.basis) : '<span class=""tr-flag"">Unknown ($0)</span>'}</td><td>${esc(g.t.date || 'Not entered')}</td><td style=""font-size: 12px; white-space: pre-wrap;"">${esc(g.t.note)}</td></tr>`).join('');
                                 const ex = expenseRows(a);
                                 $('tr-exp-body').innerHTML = ex.map(x => `<tr><td>${esc(x.date)}</td><td>${esc(x.cat.label)}</td><td>${esc(x.description)}${x.auto ? ' <span style=""color: var(--text-secondary); font-size: 11px;"">(automatic)</span>' : ''}</td><td>${x.cat.capital ? esc(DEPR_METHODS[deprSettings().method] ? (deprSettings().method === 'regular' ? 'Depreciate / amortize' : deprSettings().method === 'bonus' ? 'Bonus depreciation' : deprSettings().method === '179' ? 'Section 179' : 'Section 179 + bonus') : 'Section 179 + bonus') : 'Deduct'}</td><td class=""amount-cell"">${fmtUsd(x.usd)}</td><td style=""font-size: 12px; white-space: pre-wrap;"">${esc(x.note)}</td><td class=""tr-no-print"" style=""white-space: nowrap;"">${x.mine ? `<button type=""button"" data-edit-exp=""${esc(x.id)}"" style=""font-size: 11px; padding: 2px 8px;"">Edit</button> <button type=""button"" data-remove-exp=""${esc(x.id)}"" style=""font-size: 11px; padding: 2px 8px;"">Remove</button>` : ''}</td></tr>`).join('')
                                     + (ex.length ? `<tr class=""tr-total""><td colspan=""4"">Deduct: ${fmtUsd(sum(ex.filter(x => !x.cat.capital), x => x.usd))} · Depreciate: ${fmtUsd(sum(ex.filter(x => x.cat.capital), x => x.usd))}</td><td class=""amount-cell"">${fmtUsd(sum(ex, x => x.usd))}</td><td colspan=""2""></td></tr>` : `<tr><td colspan=""7"" style=""text-align: center; color: var(--text-secondary);"">No node expenses for ${esc(a.year)} yet</td></tr>`);
@@ -7655,13 +7681,13 @@ public static partial class WebDashboard
                                 $('tr-loans').hidden = !a.loans.length;
                                 $('tr-loans-body').innerHTML = a.loans.map(l => `<tr><td>${partyName(l.cp)}</td><td class=""amount-cell"">${fmtOpt(l.lent)}</td><td class=""amount-cell"">${fmtOpt(l.repaid)}</td><td class=""amount-cell"">${l.auto > EPS ? fmtOpt(l.auto) : '-'}</td><td class=""amount-cell"">${fmtOpt(l.owed)}</td></tr>`).join('');
                                 $('tr-moves').hidden = !moves.length;
-                                $('tr-moves-body').innerHTML = moves.map(m => `<tr><td>${fmtTime(m.e.timeUtc)}</td><td>${partyName(m.e.counterparty)}</td><td class=""amount-cell"">${fmtOpt(m.e.amountOpt)}</td><td>${esc(OUT_KINDS[m.t.kind].label)}</td><td class=""amount-cell"">${fmtUsd(m.cost)}</td><td class=""amount-cell"">${fmtUsd(m.valueWhenSent)}</td><td style=""font-size: 12px; white-space: pre-wrap;"">${esc(m.t.note)}</td></tr>`).join('');
+                                $('tr-moves-body').innerHTML = moves.map(m => `<tr><td>${fmtTime(m.e.timeUtc)}${wTag(m)}</td><td>${partyName(m.e.counterparty)}</td><td class=""amount-cell"">${fmtOpt(m.e.amountOpt)}</td><td>${esc(OUT_KINDS[m.t.kind].label)}</td><td class=""amount-cell"">${fmtUsd(m.cost)}</td><td class=""amount-cell"">${fmtUsd(m.valueWhenSent)}</td><td style=""font-size: 12px; white-space: pre-wrap;"">${esc(m.t.note)}</td></tr>`).join('');
 
                                 // Payout schedule.
                                 $('tr-payouts-body').innerHTML = shown.slice().reverse().map(x => {
                                     const acc = x.fmv?.a;
                                     const market = !acc ? (a.rule === 'reviewed' ? '<span class=""tr-flag"">Unresolved</span>' : 'No market yet') : acc.source.startsWith('Coinstore') ? 'Coinstore open' : acc.source.startsWith('Osmosis') ? 'Osmosis only' : 'None you could reach';
-                                    return `<tr><td>${fmtTime(x.e.timeUtc)}</td><td>${esc(typeLabel(x))}${x.inferred ? ' <span style=""color: var(--text-secondary);"" title=""No same-day node/staking pair; guessed from nearby days"">(est.)</span>' : ''}</td><td class=""amount-cell"">${fmtOpt(x.e.amountOpt)}</td><td class=""amount-cell"">${fmtPrice(x.e.priceUsd)}</td>
+                                    return `<tr><td>${fmtTime(x.e.timeUtc)}${wTag(x)}</td><td>${esc(typeLabel(x))}${x.inferred ? ' <span style=""color: var(--text-secondary);"" title=""No same-day node/staking pair; guessed from nearby days"">(est.)</span>' : ''}</td><td class=""amount-cell"">${fmtOpt(x.e.amountOpt)}</td><td class=""amount-cell"">${fmtPrice(x.e.priceUsd)}</td>
                                         <td title=""${esc(acc?.source || '')}"">${market}</td><td class=""amount-cell"">${acc?.discount != null ? fmtPct(acc.discount) : '-'}</td><td class=""amount-cell"">${fmtPrice(x.fmv ? x.fmv.value / x.e.amountOpt : null)}</td><td class=""amount-cell"">${fmtUsd(x.fmv?.value)}</td>
                                         ${txCell(x.e.txHash)}</tr>`;
                                 }).join('') || '<tr><td colspan=""9"" style=""text-align: center; color: var(--text-secondary);"">No payouts in ' + esc(a.year) + '</td></tr>';
@@ -7676,7 +7702,7 @@ public static partial class WebDashboard
                                     '<strong>Sales and exchanges:</strong> selling OPT, or paying for a node or anything else with it, is a disposal: gain or loss = amount realized minus cost basis (IRS FAQ Q14–Q16). Report on Form 8949 and Schedule D. Net capital losses offset gains and up to $3,000 a year of other income, with the rest carried forward. A loss on a sale to a related person is not allowed (IRC §267).',
                                     '<strong>Node expenses:</strong> deductible against node income only if running nodes is a trade or business (IRC §162, Schedule C); then node income is also subject to self-employment tax. Node purchases and equipment are capital costs. They can be deducted in the year placed in service by electing IRC §179 expensing (limited to the year&#39;s dollar limit and to active business income, with any excess carried forward) and by bonus depreciation under IRC §168(k) (100% for property acquired after January 19, 2025, under P.L. 119-21); any basis left is recovered by regular depreciation or amortization. All on Form 4562; see section 5 for the method used. Expenses paid in OPT are also disposals of that OPT, with their gain or loss in section 4.',
                                     '<strong>Worthless or stuck OPT:</strong> the IRS has said a token still trading somewhere is not worthless and that abandonment needs an affirmative act (Chief Counsel Advice 202302011). OPT still trades on Osmosis, so selling it there, even for very little, is the clearer way to realize a loss than claiming it is worthless.',
-                                    `<strong>Data:</strong> payouts and transfers are read from the Optio chain (${ledger.entries.length.toLocaleString('en-US')} transfers for this wallet; node distributions from ${esc(dist.source)}, chain staking rewards from the distribution module). Quoted prices: ${esc(dist.priceSource)}. Coinstore deposits to ${esc(flows.depositCollector)} and withdrawals from ${esc(flows.hotWallet)}; Coinstore candles ${fmtDate(market.sources.coinstoreFrom)} to ${fmtDate(market.sources.coinstoreTo)}; Osmosis swaps from the Osmosis archive node. All dates are UTC.`,
+                                    `<strong>Data:</strong> payouts and transfers are read from the Optio chain (${data.all ? sum([ledger, ...(data.others || []).map(o => o.ledger)].filter(Boolean), l => l.entries.length).toLocaleString('en-US') + ' transfers across your ' + reportWallets().length + ' wallets' : ledger.entries.length.toLocaleString('en-US') + ' transfers for this wallet'}; node distributions from ${esc(dist.source)}, chain staking rewards from the distribution module). Quoted prices: ${esc(dist.priceSource)}. Coinstore deposits to ${esc(flows.depositCollector)} and withdrawals from ${esc(flows.hotWallet)}; Coinstore candles ${fmtDate(market.sources.coinstoreFrom)} to ${fmtDate(market.sources.coinstoreTo)}; Osmosis swaps from the Osmosis archive node. All dates are UTC.`,
                                 ].map(t => `<li>${t}</li>`).join('');
                                 $('tr-evidence-files').innerHTML = ev && ev.files
                                     ? `Raw source records were captured ${esc(String(ev.capturedUtc).replace('T', ' ').slice(0, 19))} UTC (${ev.files.length} files, each with a SHA-256 fingerprint): <a href=""/api/market/evidence/${encodeURIComponent(ev.id)}.zip"">download the evidence zip</a>.`
@@ -7689,15 +7715,15 @@ public static partial class WebDashboard
                             };
 
                             // ---------------------------------------------------------------- editing
-                            const saveLabel = async (key, field, value) => {
-                                const current = { ...(labels[key] || {}) };
+                            const saveLabel = async (rk, field, value) => {
+                                const [address, key] = splitKey(rk), lab = labelsOf(address);
+                                const current = { ...(lab[key] || {}) };
                                 if (value === '' || value == null) delete current[field]; else current[field] = value;
                                 if (field !== 'kind' && !current.kind) {
-                                    const shown = report.querySelector(`select[data-field=""kind""][data-key=""${CSS.escape(key)}""]`);
+                                    const shown = report.querySelector(`select[data-field=""kind""][data-key=""${CSS.escape(rk)}""]`);
                                     if (shown) current.kind = shown.value;
                                 }
-                                labels[key] = current;
-                                const address = data.dist.address;
+                                lab[key] = current;
                                 try {
                                     const r = await fetch('/api/tax/labels?address=' + encodeURIComponent(address), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: Object.keys(current).length ? current : null }) });
                                     if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
@@ -7800,17 +7826,23 @@ public static partial class WebDashboard
                             });
                             // Confirm the treatment shown: one row, or every row still flagged.
                             const confirmKeys = async (keys) => {
-                                const update = {};
-                                for (const key of keys) {
-                                    const shown = report.querySelector(`select[data-field=""kind""][data-key=""${CSS.escape(key)}""]`);
+                                const byWallet = new Map();
+                                for (const rk of keys) {
+                                    const shown = report.querySelector(`select[data-field=""kind""][data-key=""${CSS.escape(rk)}""]`);
                                     if (!shown) continue;
-                                    labels[key] = { ...(labels[key] || {}), kind: shown.value };
-                                    update[key] = labels[key];
+                                    const [address, key] = splitKey(rk), lab = labelsOf(address);
+                                    lab[key] = { ...(lab[key] || {}), kind: shown.value };
+                                    if (!byWallet.has(address)) byWallet.set(address, {});
+                                    byWallet.get(address)[key] = lab[key];
                                 }
                                 try {
-                                    const r = await fetch('/api/tax/labels?address=' + encodeURIComponent(data.dist.address), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
-                                    if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
-                                    status.textContent = `Confirmed ${Object.keys(update).length} transfer(s).`;
+                                    let n = 0;
+                                    for (const [address, update] of byWallet) {
+                                        const r = await fetch('/api/tax/labels?address=' + encodeURIComponent(address), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
+                                        if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
+                                        n += Object.keys(update).length;
+                                    }
+                                    status.textContent = `Confirmed ${n} transfer(s).`;
                                 } catch (error) { status.textContent = 'Could not save: ' + error.message; }
                                 const y = window.scrollY; render(); window.scrollTo(0, y);
                             };
@@ -7849,20 +7881,20 @@ public static partial class WebDashboard
                                 e.preventDefault();
                                 if (!data?.view) return;
                                 const a = data.view, type = typeSelect.value;
-                                const lines = [['time_utc', 'height', 'tx_hash', 'type', 'type_estimated', 'amount_opt', 'quoted_price_usd', 'quoted_value_usd', 'market_that_day', 'marketability_discount_pct', 'days_until_sellable', 'volatility_pct', 'opt_above_capacity', 'fmv_per_opt_usd', 'fmv_usd']];
+                                const lines = [['time_utc', 'height', 'tx_hash', 'type', 'type_estimated', 'amount_opt', 'quoted_price_usd', 'quoted_value_usd', 'market_that_day', 'marketability_discount_pct', 'days_until_sellable', 'volatility_pct', 'opt_above_capacity', 'fmv_per_opt_usd', 'fmv_usd', 'wallet']];
                                 for (const x of a.incomeYear.filter(x => !type || x.kind === type)) {
                                     const acc = x.fmv?.a;
-                                    lines.push([fmtTime(x.e.timeUtc), x.e.height, x.e.txHash, typeLabel(x), x.inferred ? 'yes' : 'no', x.e.amountOpt, x.e.priceUsd, x.quoted, acc?.source, acc?.discount != null ? (acc.discount * 100).toFixed(2) : '', acc?.waitDays ?? '', acc?.vol != null ? (acc.vol * 100).toFixed(1) : '', x.fmv?.excess, x.fmv ? x.fmv.value / x.e.amountOpt : '', x.fmv?.value]);
+                                    lines.push([fmtTime(x.e.timeUtc), x.e.height, x.e.txHash, typeLabel(x), x.inferred ? 'yes' : 'no', x.e.amountOpt, x.e.priceUsd, x.quoted, acc?.source, acc?.discount != null ? (acc.discount * 100).toFixed(2) : '', acc?.waitDays ?? '', acc?.vol != null ? (acc.vol * 100).toFixed(1) : '', x.fmv?.excess, x.fmv ? x.fmv.value / x.e.amountOpt : '', x.fmv?.value, x.w || data.dist.address]);
                                 }
-                                download(`opt-income-${data.dist.address}-${a.year}.csv`, lines);
+                                download(`opt-income-${data.all ? 'all-wallets' : data.dist.address}-${a.year}.csv`, lines);
                             });
                             $('tr-sales-csv').addEventListener('click', (e) => {
                                 e.preventDefault();
                                 if (!data?.view) return;
                                 const a = data.view;
-                                const lines = [['description', 'date_acquired', 'date_sold', 'proceeds_usd', 'proceeds_estimated', 'cost_basis_usd', 'gain_loss_usd', 'term', 'treatment', 'sent_utc', 'sent_to', 'sent_to_name', 'tx_hash', 'note']];
-                                for (const s of a.sales) lines.push([`${s.qty} OPT`, s.acquired, s.soldOn, s.proceeds?.toFixed(2), s.proceedsEstimated ? 'yes' : 'no', s.cost?.toFixed(2), s.gain?.toFixed(2), s.long ? 'long' : 'short', OUT_KINDS[s.t.kind].label, fmtTime(s.e.timeUtc), s.e.counterparty, names[s.e.counterparty] || '', s.e.txHash, s.t.note]);
-                                download(`opt-sales-${data.dist.address}-${a.year}.csv`, lines);
+                                const lines = [['description', 'date_acquired', 'date_sold', 'proceeds_usd', 'proceeds_estimated', 'cost_basis_usd', 'gain_loss_usd', 'term', 'treatment', 'sent_utc', 'sent_to', 'sent_to_name', 'tx_hash', 'note', 'wallet']];
+                                for (const s of a.sales) lines.push([`${s.qty} OPT`, s.acquired, s.soldOn, s.proceeds?.toFixed(2), s.proceedsEstimated ? 'yes' : 'no', s.cost?.toFixed(2), s.gain?.toFixed(2), s.long ? 'long' : 'short', OUT_KINDS[s.t.kind].label, fmtTime(s.e.timeUtc), s.e.counterparty, names[s.e.counterparty] || '', s.e.txHash, s.t.note, s.w || data.dist.address]);
+                                download(`opt-sales-${data.all ? 'all-wallets' : data.dist.address}-${a.year}.csv`, lines);
                             });
 
                             $('tr-exp-csv').addEventListener('click', (e) => {
@@ -7870,7 +7902,7 @@ public static partial class WebDashboard
                                 if (!data?.view) return;
                                 const lines = [['date', 'category', 'treatment', 'description', 'amount_usd', 'source', 'note']];
                                 for (const x of expenseRows(data.view)) lines.push([x.date, x.cat.label, x.cat.capital ? 'depreciate' : 'deduct', x.description, x.usd?.toFixed(2), x.auto ? 'chain' : 'entered', x.note]);
-                                download(`opt-node-expenses-${data.dist.address}-${data.view.year}.csv`, lines);
+                                download(`opt-node-expenses-${data.all ? 'all-wallets' : data.dist.address}-${data.view.year}.csv`, lines);
                             });
 
                             // ---------------------------------------------------------------- load
@@ -7881,15 +7913,20 @@ public static partial class WebDashboard
                                 return j;
                             };
                             const updateUrl = () => {
-                                const q = new URLSearchParams({ address: addressInput.value.trim(), year: yearSelect.value });
+                                const q = new URLSearchParams({ year: yearSelect.value });
+                                if (addressInput.value.trim()) q.set('address', addressInput.value.trim());
                                 if (typeSelect.value) q.set('type', typeSelect.value);
                                 if (ruleSelect.value !== 'dlom') q.set('rule', ruleSelect.value);
                                 if (blockageInput.value) q.set('blockage', blockageInput.value);
                                 history.replaceState(null, '', '?' + q.toString());
                             };
                             const run = async () => {
-                                const address = addressInput.value.trim();
-                                if (!window.opticWallets.validAny(address)) { status.textContent = 'Enter your optio1... wallet address (or save it as primary on My Wallets).'; return; }
+                                const requested = addressInput.value.trim().toLowerCase();
+                                // The Tax Report with no address covers all your wallets; the primary wallet anchors it and holds the
+                                // report-wide settings (expenses, depreciation, lot method), as before.
+                                const all = MODE === 'report' && !requested;
+                                const address = all ? (window.opticWallets.primary() || (window.opticWallets.listAll()[0] || {}).a || '') : requested;
+                                if (!window.opticWallets.validAny(address)) { status.textContent = all ? 'Save your wallets on My Wallets, or enter an optio1... address.' : 'Enter your optio1... wallet address (or save it as primary on My Wallets).'; return; }
                                 updateUrl();
                                 const done = window.opticBusy(submit, status, 'Reading the chain and market history');
                                 status.textContent = 'Reading your rewards and transfers, Coinstore deposits and withdrawals, and market history...';
@@ -7932,7 +7969,7 @@ public static partial class WebDashboard
                                             if (!wd) continue;
                                             for (const e of wd.ledger.entries) if (e.txHash === lk.optioTxHash && e.direction === lk.direction && !allW.some(x => x.address === e.counterparty)) e.counterparty = o.address;
                                         }
-                                    data = { market, flows, dist, ledger, evidence, others, titn: null, titnLots: null, osmoNotes: [selected, ...others].flatMap(x => x.osmoNotes || []) };
+                                    data = { market, flows, dist, ledger, evidence, others, all, requested, titn: null, titnLots: null, osmoNotes: [selected, ...others].flatMap(x => x.osmoNotes || []) };
                                     await loadReviewed();
                                     // Default lot method: highest cost first, recorded once as a standing order (server-stamped).
                                     if (!lotMethod()) { try { await setLotMethod({ method: 'hifo' }); } catch (error) { status.textContent = 'Could not record the standing order: ' + error.message; } }
@@ -8010,7 +8047,7 @@ public static partial class WebDashboard
                             };
                             const rerender = async () => {
                                 updateUrl();
-                                if (!data || data.dist.address !== addressInput.value.trim()) return;
+                                if (!data || data.requested !== addressInput.value.trim().toLowerCase()) return;
                                 try { await loadReviewed(); } catch (error) { status.textContent = 'Error: ' + error.message; return; }
                                 render();
                             };
@@ -8049,7 +8086,7 @@ public static partial class WebDashboard
                             $('tr-gift-add').addEventListener('click', async () => {
                                 const a = $('tr-gift-address').value.trim().toLowerCase(), n = $('tr-gift-name').value.trim();
                                 if (!/^optio1[02-9ac-hj-np-z]{38,58}$/.test(a)) { status.textContent = 'Enter the optio1... address the gift came from.'; return; }
-                                if (data && a === data.dist.address) { status.textContent = 'That is the wallet this report is for.'; return; }
+                                if (ownWallets().has(a)) { status.textContent = 'That is one of your own wallets.'; return; }
                                 try { await saveGifts({ ...giftSenders, [a]: n }); $('tr-gift-address').value = ''; $('tr-gift-name').value = ''; status.textContent = 'Gift wallet saved.'; }
                                 catch (error) { status.textContent = 'Could not save: ' + error.message; }
                             });
@@ -8104,7 +8141,8 @@ public static partial class WebDashboard
                             });
                             fetch('/api/address-book').then(r => r.json()).then(n => { names = n || {}; renderNames(); if (data) render(); }).catch(() => renderNames());
 
-                            const renderWallets = () => window.opticWallets.renderSwitcher($('tr-wallets'), addressInput.value.trim() || null, (address) => { addressInput.value = address; run(); }, true);
+                            // The Sell Planner and Sales & Lots work on one wallet (you sell from a wallet), so they keep the wallet buttons.
+                            const renderWallets = () => { if (MODE === 'report') return; window.opticWallets.renderSwitcher($('tr-wallets'), addressInput.value.trim() || null, (address) => { addressInput.value = address; run(); }, true); };
                             renderWallets();
                             form.addEventListener('submit', (e) => { e.preventDefault(); run(); });
                             for (const el of [yearSelect, typeSelect, ruleSelect]) el.addEventListener('change', rerender);
@@ -8115,7 +8153,7 @@ public static partial class WebDashboard
                             $('tr-assets').addEventListener('change', () => { try { localStorage.setItem('optic_tr_assets', $('tr-assets').value); } catch (e) { } if (data) { render(); loadOtherAssets(); } });
                             blockageInput.addEventListener('input', rerender);
                             $('tr-print').addEventListener('click', () => window.print());
-                            if (addressInput.value) run();
+                            if (MODE === 'report' || addressInput.value) run();
                         })();
                     </script>
 ");
