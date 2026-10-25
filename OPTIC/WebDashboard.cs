@@ -310,8 +310,8 @@ public static partial class WebDashboard
                 var series = await TokenPriceService.GetDailySeriesAsync(ctx.RequestAborted);
                 return Results.Json(new
                 {
-                    source = "CoinMarketCap (OPT/USD)",
-                    rows = series.Select(p => new { date = p.DateUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), priceUsd = p.CloseUsd })
+                    source = "CoinMarketCap (OPT/USD); Osmosis swap prices for days after CoinMarketCap's last close",
+                    rows = series.Select(p => new { date = p.DateUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), priceUsd = p.CloseUsd, from = TokenPriceService.DailySource(p.DateUtc) })
                 });
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -8103,6 +8103,7 @@ public static partial class WebDashboard
     static void AppendMyWalletsCard(System.Text.StringBuilder sb)
     {
         AppendMyWalletsScript(sb);
+        AppendPortfolioCard(sb);
         sb.Append(@"
                     <div class=""card"" style=""grid-column: 1 / -1;"">
                         <h2>My Wallets</h2>

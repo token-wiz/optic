@@ -24,6 +24,8 @@ public static class TokenPriceService
     private static readonly Dictionary<long, decimal> Daily = new();
     private static readonly Dictionary<long, decimal> DailyVolumeUsd = new();
     private static readonly Dictionary<long, DateTimeOffset> HourlyChunksFetched = new();
+    // Days after CoinMarketCap's last close: the day's average Osmosis swap price for OPT, or the last Osmosis trade.
+    private static readonly Dictionary<long, (decimal Price, string Source)> OsmosisFill = new();
     private static DateTimeOffset _dailyLoadedAt;
     private static long? _dataStartUnix;
     private static long? _dataEndUnix;
@@ -64,6 +66,8 @@ public static class TokenPriceService
                     result[t] = new TokenPricePoint(hourClose, FromUnix(hourKey), "1h");
                 else if (Daily.TryGetValue(dayKey, out var dayClose))
                     result[t] = new TokenPricePoint(dayClose, FromUnix(dayKey), "1d");
+                else if (OsmosisFill.TryGetValue(dayKey, out var osmo))
+                    result[t] = new TokenPricePoint(osmo.Price, FromUnix(dayKey), "osmosis");
                 else
                     result[t] = null;
             }
@@ -76,14 +80,16 @@ public static class TokenPriceService
         return result;
     }
 
-    /// <summary>Every daily close CMC has for OPT, oldest first.</summary>
+    /// <summary>Every daily close CMC has for OPT, then Osmosis prices for the days after CMC's last close, oldest first.</summary>
     public static async Task<List<(DateTime DateUtc, decimal CloseUsd)>> GetDailySeriesAsync(CancellationToken ct)
     {
         await Gate.WaitAsync(ct);
         try
         {
             await EnsureDailyAsync(ct);
-            return Daily.OrderBy(kv => kv.Key).Select(kv => (FromUnix(kv.Key), kv.Value)).ToList();
+            return Daily.Select(kv => (Key: kv.Key, Price: kv.Value))
+                .Concat(OsmosisFill.Where(kv => !Daily.ContainsKey(kv.Key)).Select(kv => (Key: kv.Key, Price: kv.Value.Price)))
+                .OrderBy(x => x.Key).Select(x => (FromUnix(x.Key), x.Price)).ToList();
         }
         finally
         {
@@ -134,12 +140,56 @@ public static class TokenPriceService
             end = earliest - 1;
         }
 
-        if (Daily.Count > 0)
+        FillFromOsmosis();
+        var allDays = Daily.Keys.Concat(OsmosisFill.Keys).ToList();
+        if (allDays.Count > 0)
         {
-            _dataStartUnix = Daily.Keys.Min();
-            _dataEndUnix = Daily.Keys.Max();
+            _dataStartUnix = allDays.Min();
+            _dataEndUnix = allDays.Max();
         }
         _dailyLoadedAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Where a day's OPT price comes from: "CoinMarketCap", an Osmosis description, or null when there is none.</summary>
+    public static string? DailySource(DateTime dayUtc)
+    {
+        var key = ToUnix(dayUtc.Date);
+        return Daily.ContainsKey(key) ? "CoinMarketCap" : OsmosisFill.TryGetValue(key, out var o) ? o.Source : null;
+    }
+
+    // For each day after CoinMarketCap's last close up to today: that day's average price of OPT swapped against
+    // stablecoins on Osmosis (USD traded / OPT traded), or on days with no such swap the last Osmosis trade before it.
+    // Read from odata/osmosis-opt-daily.json, which the market volume service keeps up to date.
+    private static void FillFromOsmosis()
+    {
+        OsmosisFill.Clear();
+        var path = Path.Combine(Environment.CurrentDirectory, "odata", "osmosis-opt-daily.json");
+        if (!File.Exists(path)) return;
+        var osmo = new SortedDictionary<long, decimal>();
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            foreach (var d in doc.RootElement.GetProperty("Days").EnumerateArray())
+            {
+                var usd = d.TryGetProperty("StableUsd", out var su) && su.ValueKind == JsonValueKind.Number ? su.GetDecimal() : 0m;
+                var opt = d.TryGetProperty("StableOpt", out var so) && so.ValueKind == JsonValueKind.Number ? so.GetDecimal() : 0m;
+                if (usd <= 0 || opt <= 0) continue;
+                var day = DateTime.Parse(d.GetProperty("Date").GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal).Date;
+                osmo[ToUnix(day)] = usd / opt;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or FormatException or KeyNotFoundException or InvalidOperationException) { return; }
+        if (osmo.Count == 0) return;
+        var cmcLast = Daily.Count > 0 ? Daily.Keys.Max() : osmo.Keys.Min() - DaySeconds;
+        var today = ToUnix(DateTime.UtcNow.Date);
+        // Start from the last Osmosis trade on or before CMC's last day, so the first gap days have a price.
+        decimal? last = null; long lastDay = 0;
+        foreach (var (day, price) in osmo) { if (day > cmcLast) break; last = price; lastDay = day; }
+        for (var day = cmcLast + DaySeconds; day <= today; day += DaySeconds)
+        {
+            if (osmo.TryGetValue(day, out var px)) { OsmosisFill[day] = (px, "Osmosis swaps (average that day)"); last = px; lastDay = day; }
+            else if (last is { } lp) OsmosisFill[day] = (lp, $"Osmosis, last trade on {FromUnix(lastDay):yyyy-MM-dd}");
+        }
     }
 
     private static async Task EnsureHourlyAsync(long fromUnix, long toUnix, CancellationToken ct)
