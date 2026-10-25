@@ -125,6 +125,8 @@ public static partial class WebDashboard
         MapTitnLots(app);
         MapBsc(app);
         MapChains(app);
+        MapPortfolioHistory(app);
+        MapSovr(app);
         app.MapGet("/api/staking/positions", async (HttpContext ctx) =>
         {
             var address = AddressParam(ctx);

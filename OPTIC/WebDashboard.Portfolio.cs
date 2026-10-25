@@ -10,11 +10,37 @@ public static partial class WebDashboard
         <div class="card" style="grid-column: 1 / -1;" id="pf-card">
             <h2 style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;">Portfolio<a id="pf-manage" href="/page/my-wallets" style="font-size: 12px; font-weight: 400;">Manage wallets</a></h2>
             <div class="card-content">
-                <div id="pf-status" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">Reading your wallets…</div>
-                <div id="pf-remind" hidden style="border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px;">
-                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px;"><strong style="font-size: 14px;">Reminders</strong><span id="pf-remind-note" style="font-size: 12px; color: var(--text-secondary);"></span><button type="button" id="pf-remind-all" style="font-size: 11px; padding: 2px 10px; margin-left: auto;">Add all to calendar</button></div>
-                    <div id="pf-remind-list" style="display: flex; flex-direction: column; gap: 4px; font-size: 13px;"></div>
+                <div id="pf-overview" hidden>
+                    <style>
+                        #pf-overview .pf-head { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+                        #pf-overview .pf-big { font-size: 30px; font-weight: 700; line-height: 1.1; }
+                        #pf-overview .pf-sub { font-size: 13px; color: var(--text-secondary); }
+                        #pf-overview .pf-up { color: var(--success, #107c10); font-weight: 600; }
+                        #pf-overview .pf-down { color: var(--danger, #c50f1f); font-weight: 600; }
+                        #pf-overview .pf-spark { flex: 1 1 220px; min-width: 180px; max-width: 520px; }
+                        #pf-overview .pf-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-bottom: 10px; }
+                        #pf-overview .pf-kpi { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+                        #pf-overview .pf-kpi .k { font-size: 12px; color: var(--text-secondary); }
+                        #pf-overview .pf-kpi .v { font-size: 18px; font-weight: 700; }
+                        #pf-overview .pf-kpi .s { font-size: 12px; color: var(--text-muted); }
+                        #pf-overview .pf-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--border); margin-bottom: 6px; }
+                        #pf-overview .pf-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; margin-bottom: 10px; }
+                        #pf-overview .pf-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+                        #pf-overview .pf-links { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+                        #pf-overview .pf-links a { font-size: 13px; border: 1px solid var(--border); border-radius: 14px; padding: 3px 12px; text-decoration: none; }
+                    </style>
+                    <div class="pf-head">
+                        <div><div class="pf-sub">Total value</div><div class="pf-big" id="pf-total">–</div><div class="pf-sub" id="pf-change"></div></div>
+                        <div class="pf-spark" id="pf-spark"></div>
+                    </div>
+                    <div class="pf-kpis" id="pf-kpis"></div>
+                    <div class="pf-bar" id="pf-bar"></div>
+                    <div class="pf-legend" id="pf-legend"></div>
+                    <div class="pf-links">
+                        <a href="/page/needs-input">Needs Your Input</a><a href="/page/tax-report">Tax Report</a><a href="/page/my-staking">My Staking</a><a href="/page/pnl">Profit &amp; Loss</a><a href="/page/my-wallets">My Wallets</a>
+                    </div>
                 </div>
+                <div id="pf-status" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">Reading your wallets…</div>
                 <div id="pf-tiles" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 10px;"></div>
                 <div class="data-table-wrap">
                     <table class="data-table">
@@ -40,13 +66,54 @@ public static partial class WebDashboard
                 const usd = (v) => '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 const qty = (v, a) => Number(v).toLocaleString('en-US', { maximumFractionDigits: a === 'ETH' || a === 'BNB' || a === 'SOL' ? 6 : a === 'OPT' || a === 'TITN' || a === 'TGT' || a === 'PATRIOT' ? 0 : 2 });
                 const day = (v) => v ? new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
-                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', solana: 'Solana', optio: 'Optio' };
+                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', sovr: 'SOVR', solana: 'Solana', optio: 'Optio' };
                 // One request per page for data the Portfolio and My Wallets cards both read.
                 window.opticGet = window.opticGet || (() => { /* Last visit's answers (saved in this browser per user) are returned at once and replaced when the fresh ones arrive; each arrival fires 'optic-fresh' so the page can redraw. */ const mem = {}, key = (u) => 'optic.cache.' + ((window.opticUser || {}).name || '') + '.' + u; let timer = null; const get = (u) => { if (mem[u]) return mem[u]; let old = null; try { old = JSON.parse(localStorage.getItem(key(u)) || 'null'); } catch (e) { } const live = fetch(u).then(r => r.ok ? r.json() : null).then(j => { if (j) { try { localStorage.setItem(key(u), JSON.stringify({ t: Date.now(), j })); } catch (e) { } } return j; }); if (!old || !old.j) return mem[u] = live; get.cachedAt = Math.min(get.cachedAt || Infinity, old.t); get.waiting = (get.waiting || 0) + 1; live.catch(() => null).then(j => { mem[u] = Promise.resolve(j || old.j); get.waiting--; clearTimeout(timer); timer = setTimeout(() => window.dispatchEvent(new Event('optic-fresh')), 300); }); return mem[u] = Promise.resolve(old.j); }; return get; })();
-                if (location.pathname.endsWith('/my-wallets')) $('pf-manage').hidden = true; // the wallet list is right below
-                const ORDER = ['USDC', 'OPT', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'SOL', 'BNB', 'USDT', 'OSMO']; // cash (USDC) first
-                // Reminders: unlock dates and rewards ready to claim, from the staked positions. Each can go to your calendar
-                // (an .ics file your phone or computer opens), so the reminder comes from your own calendar app.
+                const onWallets = location.pathname.endsWith('/my-wallets');
+                if (onWallets) $('pf-manage').hidden = true; // the wallet list is right below
+                else { $('pf-overview').hidden = false; $('pf-tiles').style.display = 'none'; } // the home dashboard shows the overview instead of the tiles
+                // Daily totals saved to your account (one per day you opened OPTIC); days with no visit have no point.
+                let history = [], savedToday = false;
+                fetch('/api/portfolio/history').then(r => r.ok ? r.json() : null).then(j => { if (j && j.points) { history = j.points; if (lastOverview) renderOverview(...lastOverview); } }).catch(() => { });
+                const COLORS = { USDC: '#2775ca', OPT: '#7b61ff', SOVR: '#1098ad', TITN: '#e8590c', NILA: '#12b886', GNK: '#f59f00', TGT: '#d6336c', PATRIOT: '#c92a2a', ETH: '#627eea', SOL: '#9945ff', BNB: '#f0b90b', USDT: '#26a17b', OSMO: '#5e12a0' };
+                const short = (t) => new Date(t + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+                let lastOverview = null;
+                const renderOverview = (total, values, avail, staked, rewards, rewardsReady, rewardsLater, next, loading) => {
+                    lastOverview = [total, values, avail, staked, rewards, rewardsReady, rewardsLater, next, loading];
+                    $('pf-total').textContent = usd(total);
+                    // Change against the last saved day before today, and against a week ago.
+                    const today = new Date().toISOString().slice(0, 10);
+                    const past = history.filter(p => p.date < today);
+                    const diff = (p) => { const d = total - p.total, pct = p.total > 0 ? d / p.total * 100 : 0; return `<span class="${d >= 0 ? 'pf-up' : 'pf-down'}">${d >= 0 ? '+' : '−'}${usd(Math.abs(d))} (${d >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%)</span>`; };
+                    const prev = past[past.length - 1];
+                    const weekAgo = new Date(Date.now() - 7 * dayMs).toISOString().slice(0, 10);
+                    const week = past.filter(p => p.date <= weekAgo).pop();
+                    $('pf-change').innerHTML = loading ? 'Still adding up…' : prev ? `${diff(prev)} since ${short(prev.date)}` + (week && week !== prev ? ` · ${diff(week)} since ${short(week.date)}` : '') : 'Change since your last visit shows here from tomorrow.';
+                    // Small chart of the saved days plus today.
+                    const pts = past.slice(-90).map(p => ({ date: p.date, total: p.total })).concat(loading ? [] : [{ date: today, total }]);
+                    if (pts.length >= 2) {
+                        const w = 300, h = 54, lo = Math.min(...pts.map(p => p.total)), hi = Math.max(...pts.map(p => p.total)), span = hi - lo || 1;
+                        const xy = pts.map((p, i) => [(i / (pts.length - 1) * w).toFixed(1), (h - 4 - (p.total - lo) / span * (h - 8)).toFixed(1)]);
+                        const up = pts[pts.length - 1].total >= pts[0].total, col = up ? 'var(--success, #107c10)' : 'var(--danger, #c50f1f)';
+                        $('pf-spark').innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width: 100%; height: ${h}px; display: block;" role="img" aria-label="Total value from ${short(pts[0].date)} to ${short(pts[pts.length - 1].date)}"><polygon points="0,${h} ${xy.map(p => p.join(',')).join(' ')} ${w},${h}" fill="${col}" opacity="0.12"/><polyline points="${xy.map(p => p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`
+                            + `<div class="pf-sub" style="display: flex; justify-content: space-between; font-size: 11px;"><span>${short(pts[0].date)}</span><span>${pts.length} days with a visit · low ${usd(lo)} · high ${usd(hi)}</span></div>`;
+                    } else $('pf-spark').innerHTML = '<div class="pf-sub" style="font-size: 12px;">Your value chart starts today and fills in each day you open OPTIC.</div>';
+                    const kpi = (k, v, sub, title) => `<div class="pf-kpi"${title ? ` title="${esc(title)}"` : ''}><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
+                    $('pf-kpis').innerHTML =
+                        kpi('Available now', usd(avail), total > 0 ? `${Math.round(avail / total * 100)}% of your portfolio, in wallets` : 'in wallets', 'Held in your wallets, not staked, unbonding or waiting to be claimed') +
+                        kpi('Staked or unbonding', usd(staked), total > 0 ? `${Math.round(staked / total * 100)}% of your portfolio` : '', 'OPT, TITN and NILA in staking, plus OPT that is unbonding') +
+                        kpi('Rewards not claimed', usd(rewards), rewards > 0 ? `${usd(rewardsReady)} ready now${rewardsLater > 0.005 ? ` · ${usd(rewardsLater)} builds up until unlock` : ''}` : 'nothing waiting', 'Staking rewards earned so far, at today\x27s prices') +
+                        kpi('Next unlock', next ? new Date(next.t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '–', next ? `${esc(next.title)} · in ${next.days} day${next.days === 1 ? '' : 's'}` : 'no unlock dates ahead');
+                    // Allocation: the six largest holdings, the rest together.
+                    const sorted = Object.entries(values).filter(([, v]) => v > 0.005).sort((a, b) => b[1] - a[1]);
+                    const top = sorted.slice(0, 6), rest = sorted.slice(6).reduce((n, [, v]) => n + v, 0);
+                    if (rest > 0.005) top.push(['Other', rest]);
+                    const sum = top.reduce((n, [, v]) => n + v, 0) || 1;
+                    $('pf-bar').innerHTML = top.map(([k, v]) => `<div title="${esc(k)} ${usd(v)}" style="width: ${(v / sum * 100).toFixed(2)}%; background: ${COLORS[k] || '#868e96'};"></div>`).join('');
+                    $('pf-legend').innerHTML = top.map(([k, v]) => `<span><i style="background: ${COLORS[k] || '#868e96'};"></i><strong>${esc(k)}</strong> ${(v / sum * 100).toFixed(1)}% <span style="color: var(--text-muted);">${usd(v)}</span></span>`).join('');
+                };
+                const ORDER = ['USDC', 'OPT', 'SOVR', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'SOL', 'BNB', 'USDT', 'OSMO']; // cash (USDC) first
+                // Reminders: unlock dates and rewards ready to claim, from the staked positions, shown by the bell in the top bar.
                 let reminders = [];
                 const dayMs = 86400000;
                 const renderReminders = (stakes) => {
@@ -65,38 +132,8 @@ public static partial class WebDashboard
                     }
                     list.sort((x, y) => (y.ready - x.ready) || (x.t - y.t));
                     reminders = list.filter(r => r.ready || r.days <= 400);
-                    $('pf-remind').hidden = !reminders.length;
-                    const ready = reminders.filter(r => r.ready).length;
-                    $('pf-remind-note').textContent = ready ? `${ready} ready now` : `next in ${reminders[0]?.days ?? 0} days`;
-                    $('pf-remind-list').innerHTML = reminders.slice(0, 8).map((r, i) => `<div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;">
-                        <span style="min-width: 92px; font-weight: 600; ${r.ready ? 'color: var(--success, #107c10);' : ''}">${r.ready ? 'Ready now' : new Date(r.t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>
-                        <span>${esc(r.title)}${r.ready ? '' : ` <span style="color: var(--text-secondary);">(in ${r.days} day${r.days === 1 ? '' : 's'})</span>`}<div style="font-size: 11px; color: var(--text-secondary);">${esc(r.detail)}</div></span>
-                        ${r.ready ? '' : `<button type="button" data-remind="${i}" style="font-size: 11px; padding: 1px 8px; margin-left: auto;">Add to calendar</button>`}</div>`).join('')
-                        + (reminders.length > 8 ? `<div style="font-size: 12px; color: var(--text-secondary);">and ${reminders.length - 8} more in the Staked table below</div>` : '');
+                    if (window.opticReminders) window.opticReminders.set(reminders);
                 };
-                // An all-day calendar event on the date, with an alert the morning before.
-                const ics = (items) => {
-                    const d = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
-                    const txt = (v) => String(v).replace(/[\\,;]/g, m => '\\' + m).replace(/\n/g, ' ');
-                    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
-                    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OPTIC//Reminders//EN'].concat(items.flatMap((r, i) => ['BEGIN:VEVENT', `UID:optic-${d(r.t)}-${i}-${r.title.length}@optic`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d(r.t)}`, `DTEND;VALUE=DATE:${d(r.t + dayMs)}`,
-                        `SUMMARY:${txt(r.title)}`, `DESCRIPTION:${txt(r.detail + ' (from OPTIC)')}`, 'BEGIN:VALARM', 'TRIGGER:-PT15H', 'ACTION:DISPLAY', `DESCRIPTION:${txt(r.title)}`, 'END:VALARM', 'END:VEVENT']), ['END:VCALENDAR']).join('\r\n');
-                };
-                const saveIcs = (items, name) => {
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(new Blob([ics(items)], { type: 'text/calendar' }));
-                    a.download = name;
-                    a.click();
-                    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-                };
-                document.getElementById('pf-remind-list').addEventListener('click', (e) => {
-                    const b = e.target.closest('[data-remind]');
-                    if (b) saveIcs([reminders[Number(b.dataset.remind)]], 'optic-reminder.ics');
-                });
-                document.getElementById('pf-remind-all').addEventListener('click', () => {
-                    const upcoming = reminders.filter(r => !r.ready);
-                    if (upcoming.length) saveIcs(upcoming, 'optic-reminders.ics');
-                });
                 const start = async () => {
                     const W = window.opticWallets;
                     if (!W) { setTimeout(start, 200); return; }
@@ -138,6 +175,24 @@ public static partial class WebDashboard
                         }).join('') || '<tr><td colspan="8" style="text-align: center; color: var(--text-secondary);">' + (loading ? 'Reading your stakes…' : 'Nothing staked.') + '</td></tr>';
                         $('pf-stake-status').textContent = stakeNote;
                         renderReminders(stakes);
+                        if (!onWallets) {
+                            const values = {}; let avail = 0, staked = 0, rewards = 0, rewardsReady = 0, rewardsLater = 0;
+                            for (const k of rows) {
+                                const p = prices[k]; if (p == null) continue;
+                                values[k] = assets[k].total * p;
+                                for (const x of assets[k].parts) {
+                                    const n = x.note || '';
+                                    if (/^(staked|unbonding)/.test(n)) staked += x.amount * p; else if (!/^unclaimed/.test(n)) avail += x.amount * p;
+                                }
+                            }
+                            for (const st of stakes) {
+                                const rp = prices[st.rewardAsset || st.asset];
+                                if (!(st.earned > 0) || rp == null) continue;
+                                const v = st.earned * rp, later = st.unlocks && Date.parse(st.unlocks) > Date.now();
+                                rewards += v; if (later) rewardsLater += v; else rewardsReady += v;
+                            }
+                            renderOverview(total, values, avail, staked, rewards, rewardsReady, rewardsLater, reminders.find(r => !r.ready), loading);
+                        }
                         $('pf-status').textContent = loading ? 'Still reading some wallets…' : `Values at today\x27s prices (OPT: ${priceNote.OPT || 'latest available'}). Staked and unbonding amounts are included and noted; OPT locked in staking cannot be sold until it is unlocked.`;
                     };
                     let stakeNote = '';
@@ -164,7 +219,7 @@ public static partial class WebDashboard
                         if (!j) return;
                         for (const [k, v] of Object.entries(j.prices || {})) if (v > 0) prices[k === 'USDC.e' ? 'USDC' : k] = prices[k === 'USDC.e' ? 'USDC' : k] ?? v;
                         for (const w of j.wallets || []) for (const ch of w.chains) for (const b of ch.balances)
-                            add(b.symbol === 'USDC.e' ? 'USDC' : b.symbol, `${name(w.address)} · ${net[ch.chain] || ch.chain}`, b.amount, b.symbol === 'USDC.e' ? 'USDC.e (bridged)' : '');
+                            add(b.symbol === 'USDC.e' ? 'USDC' : b.symbol, `${name(w.address)} · ${net[ch.chain] || ch.chain}`, b.amount, b.note || (b.symbol === 'USDC.e' ? 'USDC.e (bridged)' : ''));
                         render(true);
                     }).catch(() => { }));
                     // Staked TITN (not in the wallet balance) and the TITN price.
@@ -200,6 +255,16 @@ public static partial class WebDashboard
                     render(false);
                     // Shown from the last visit while fresh figures load; redrawn as they arrive.
                     const G = window.opticGet;
+                    // Today's total goes into your value history once every figure is fresh (not the last visit's copy).
+                    if (!(G.waiting > 0) && !savedToday && Object.keys(prices).length) {
+                        const vals = {}; let tot = 0;
+                        for (const k of Object.keys(assets)) if (prices[k] != null) { vals[k] = assets[k].total * prices[k]; tot += vals[k]; }
+                        if (tot > 0) {
+                            savedToday = true;
+                            fetch('/api/portfolio/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ total: tot, assets: vals }) })
+                                .then(r => r.ok ? r.json() : null).then(j => { if (j && j.points) history = j.points; }).catch(() => { });
+                        }
+                    }
                     if (G.waiting > 0 && G.cachedAt) $('pf-status').textContent = `Showing your figures from ${new Date(G.cachedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} while they refresh… ` + $('pf-status').textContent;
                 };
                 start();

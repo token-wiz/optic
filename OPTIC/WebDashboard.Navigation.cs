@@ -13,6 +13,7 @@ public static partial class WebDashboard
         new("Chains", new NavPage[]
         {
             new("optio", "Optio", "The Optio layer-one blockchain: supply, staking, payouts and nodes"),
+            new("sovr", "SOVR", "The Sovren layer-one blockchain: supply, staking, validators and governance"),
         }),
         new("My OPT", new NavPage[]
         {

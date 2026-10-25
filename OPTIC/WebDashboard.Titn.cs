@@ -132,7 +132,7 @@ public static partial class WebDashboard
     }
 
     // Balances of ETH, BNB, USDC, USDT, TITN, TGT, NILA and PATRIOT on Ethereum, Arbitrum, Base and BNB Chain for the user's saved 0x... wallets (10-minute cache).
-    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null, List<(string Address, string Label)>? gonkaWallets = null, List<(string Address, string Label)>? solanaWallets = null)
+    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null, List<(string Address, string Label)>? gonkaWallets = null, List<(string Address, string Label)>? solanaWallets = null, List<(string Address, string Label)>? sovrWallets = null)
     {
         var ethPx = await LoadDailyPricesAsync("coingecko:ethereum", false, ct);
         var titnPx = await LoadDailyPricesAsync(TitnPriceKey, false, ct);
@@ -147,6 +147,12 @@ public static partial class WebDashboard
         osmoWallets ??= new();
         gonkaWallets ??= new();
         solanaWallets ??= new();
+        sovrWallets ??= new();
+        if (sovrWallets.Count > 0 || osmoWallets.Count > 0)
+        {
+            try { px["SOVR"] = Last(await LoadDailyPricesAsync(SovrPriceKey, false, ct)); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+        }
         if (solanaWallets.Count > 0)
         {
             try { px["SOL"] = Last(await LoadDailyPricesAsync(SolanaPriceKey, false, ct)); }
@@ -228,7 +234,7 @@ public static partial class WebDashboard
                     foreach (var b in doc.RootElement.GetProperty("balances").EnumerateArray())
                     {
                         var denom = b.GetProperty("denom").GetString()!;
-                        var sym = denom == "uosmo" ? "OSMO" : denom.StartsWith("ibc/6AA47B", StringComparison.Ordinal) ? "OPT" : OsmosisUsdDenoms.Contains(denom) ? (denom.Contains("USDT", StringComparison.Ordinal) ? "USDT" : "USDC") : null;
+                        var sym = denom == "uosmo" ? "OSMO" : denom == OsmosisSovrDenom ? "SOVR" : denom.StartsWith("ibc/6AA47B", StringComparison.Ordinal) ? "OPT" : OsmosisUsdDenoms.Contains(denom) ? (denom.Contains("USDT", StringComparison.Ordinal) ? "USDT" : "USDC") : null;
                         if (sym is null) continue;
                         var amt = decimal.Parse(b.GetProperty("amount").GetString()!, CultureInfo.InvariantCulture) / 1_000_000m;
                         if (amt > 0.0000001m) bals.Add((sym, amt));
@@ -258,6 +264,15 @@ public static partial class WebDashboard
             var rows = bals.Select(b => new { symbol = b.Symbol, amount = b.Amount, usd = Math.Round(b.Amount * (px.TryGetValue(b.Symbol, out var pp) ? pp : 0m), 2) }).ToList();
             result.Add(new { address = sw.Address, label = sw.Label, chains = new[] { new { chain = "solana", balances = rows } }, usd = rows.Sum(b => b.usd) });
         }
+        // SOVR accounts (Sovren): in wallet, staked, unbonding and unclaimed rewards, each noted.
+        foreach (var sv in sovrWallets)
+        {
+            List<(string Symbol, decimal Amount, string Note)> bals;
+            try { bals = await LoadSovrBalancesAsync(sv.Address, ct); }
+            catch (HttpRequestException) { bals = new(); }
+            var rows = bals.Select(b => new { symbol = b.Symbol, amount = b.Amount, usd = Math.Round(b.Amount * (px.TryGetValue(b.Symbol, out var pp) ? pp : 0m), 2), note = b.Note }).ToList();
+            result.Add(new { address = sv.Address, label = sv.Label, chains = new[] { new { chain = "sovr", balances = rows } }, usd = rows.Sum(b => b.usd) });
+        }
         return new { wallets = result, prices = px };
     }
 
@@ -276,7 +291,7 @@ public static partial class WebDashboard
         app.MapGet("/api/evm/balances", async (HttpContext ctx) =>
         {
             var wallets = UserEvmWallets(ctx);
-            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx), UserGonkaWallets(ctx), UserSolanaWallets(ctx))); }
+            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx), UserGonkaWallets(ctx), UserSolanaWallets(ctx), UserSovrWallets(ctx))); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not read your balances: " + ex.Message, 502); }
         });
         app.MapGet("/api/titn/summary", async (HttpContext ctx) =>

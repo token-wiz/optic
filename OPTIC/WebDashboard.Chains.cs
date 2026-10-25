@@ -28,6 +28,8 @@ public static partial class WebDashboard
             "History from NodeReal's free endpoint (the last saved copy is used when its quota runs out); NILA staking read from its contract."),
         new("solana", "Solana", "base58 (case-sensitive)", new[] { "SOL", "USDC", "USDT", "other SPL tokens" }, true, true, "DefiLlama (SOL); token names from DexScreener",
             "History over public Solana RPC, which rate-limits: a long history can take more than one load."),
+        new("sovr", "SOVR (Sovren)", "sovr1…", new[] { "SOVR" }, true, true, "DefiLlama (CoinGecko sovren)",
+            "History from the Sovren REST API (cached in odata/sovr), paired with SOVR on Osmosis; balances, staking and rewards; chain figures on Chains > SOVR."),
         new("gonka", "Gonka", "gonka1…", new[] { "GNK", "USDT", "USDC" }, true, false, "DefiLlama", "Balances only: transaction history is not read yet, so GNK is not in the Tax Report."),
     };
 
@@ -46,6 +48,7 @@ public static partial class WebDashboard
         yield return new("bsc", "NodeReal (history)", BscRpc, "evm", blockNumber);
         yield return new("bsc", "PublicNode (balances, staking)", BscPublicRpc, "evm", blockNumber);
         foreach (var u in SolanaRpcs) yield return new("solana", "Solana RPC", u, "solana", slot);
+        foreach (var u in SovrLcds) yield return new("sovr", "Sovren REST", u + "/cosmos/base/tendermint/v1beta1/blocks/latest", "cosmos", null);
         foreach (var u in GonkaLcds) yield return new("gonka", "Gonka REST", u + "/cosmos/base/tendermint/v1beta1/blocks/latest", "cosmos", null);
         yield return new("prices", "DefiLlama (prices)", "https://coins.llama.fi/prices/current/coingecko:ethereum,coingecko:solana", "llama", null);
         yield return new("prices", "DexScreener (token names)", "https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112", "json", null);
@@ -123,7 +126,7 @@ public static partial class WebDashboard
             foreach (var w in arr)
             {
                 var a = w?["a"]?.ToString() ?? "";
-                var kind = a.StartsWith("optio1", StringComparison.Ordinal) ? "optio" : a.StartsWith("osmo1", StringComparison.Ordinal) ? "osmosis" : a.StartsWith("gonka1", StringComparison.Ordinal) ? "gonka"
+                var kind = a.StartsWith("optio1", StringComparison.Ordinal) ? "optio" : a.StartsWith("osmo1", StringComparison.Ordinal) ? "osmosis" : a.StartsWith("gonka1", StringComparison.Ordinal) ? "gonka" : a.StartsWith("sovr1", StringComparison.Ordinal) ? "sovr"
                     : a.StartsWith("0x", StringComparison.Ordinal) ? "evm" : IsSolanaAddress(a) ? "solana" : null;
                 if (kind is not null) counts[kind] = counts.GetValueOrDefault(kind) + 1;
             }

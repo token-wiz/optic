@@ -409,5 +409,5 @@ public static partial class WebDashboard
         return new { address, chain = "osmosis-1", entries, labels, links, notes, truncated = false, source = OsmosisArchiveLcd, transactions = txs.Count };
     }
 
-    static string OsmoDenomName(string d) => d == "uosmo" ? "OSMO" : d.Contains("/alloyed/") ? d[(d.LastIndexOf('/') + 1)..] : d.StartsWith("ibc/") ? d[..10] + "…" : d;
+    static string OsmoDenomName(string d) => d == "uosmo" ? "OSMO" : d == OsmosisSovrDenom ? "SOVR" : d.Contains("/alloyed/") ? d[(d.LastIndexOf('/') + 1)..] : d.StartsWith("ibc/") ? d[..10] + "…" : d;
 }

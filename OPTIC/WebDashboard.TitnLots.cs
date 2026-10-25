@@ -90,7 +90,8 @@ public static partial class WebDashboard
         {
             var wallets = UserEvmWallets(ctx);
             var solana = UserSolanaWallets(ctx);
-            if (wallets.Count == 0 && solana.Count == 0) return VJson(new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>() });
+            var sovr = UserSovrWallets(ctx);
+            if (wallets.Count == 0 && solana.Count == 0 && sovr.Count == 0) return VJson(new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>() });
             var labelsPath = Path.Combine(DashboardAuth.UserDataDir(ctx), "titn-labels.json");
             var labels = File.Exists(labelsPath) ? JsonNode.Parse(await File.ReadAllTextAsync(labelsPath, ctx.RequestAborted)) as JsonObject ?? new() : new JsonObject();
             var refresh = ctx.Request.Query["refresh"] == "1";
@@ -98,15 +99,20 @@ public static partial class WebDashboard
             {
                 object evm = wallets.Count > 0 ? await BuildTitnLotsAsync(wallets, labels, refresh, ctx.RequestAborted)
                     : new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>(), notes = Array.Empty<string>() };
-                if (solana.Count == 0) return VJson(evm);
-                // Solana wallets: their own history, merged into the same lists (a failure there leaves the rest intact).
-                try { return VJson(MergeSolanaLots(evm, await BuildSolanaLotsAsync(solana, labels, refresh, ctx.RequestAborted, CrossChainLegs(JsonSerializer.SerializeToNode(evm) as JsonObject)))); }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+                var result = JsonSerializer.SerializeToNode(evm) as JsonObject ?? new JsonObject();
+                void Note(string text) => (result["notes"] as JsonArray ?? (JsonArray)(result["notes"] = new JsonArray())).Add(text);
+                // Solana and SOVR wallets: their own history, merged into the same lists (a failure there leaves the rest intact).
+                if (solana.Count > 0)
                 {
-                    var node = JsonSerializer.SerializeToNode(evm) as JsonObject ?? new JsonObject();
-                    (node["notes"] as JsonArray ?? (JsonArray)(node["notes"] = new JsonArray())).Add("Could not read your Solana history this time: " + ex.Message);
-                    return VJson(node);
+                    try { result = (JsonObject)MergeSolanaLots(evm, await BuildSolanaLotsAsync(solana, labels, refresh, ctx.RequestAborted, CrossChainLegs(JsonSerializer.SerializeToNode(evm) as JsonObject))); }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { Note("Could not read your Solana history this time: " + ex.Message); }
                 }
+                if (sovr.Count > 0)
+                {
+                    try { result = (JsonObject)MergeSolanaLots(result, await BuildSovrLotsAsync(sovr, UserOsmoWallets(ctx), labels, refresh, ctx.RequestAborted)); }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException) { Note("Could not read your SOVR history this time: " + ex.Message); }
+                }
+                return VJson(result);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not build your TGT / TITN / ETH lots: " + ex.Message, 502); }
         });
@@ -114,9 +120,10 @@ public static partial class WebDashboard
         app.MapPost("/api/titn/labels", async (HttpContext ctx) =>
         {
             var body = await JsonNode.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted) as JsonObject;
-            // An Ethereum-style hash (lowercase) or a Solana signature (base58, case-sensitive).
+            // An Ethereum-style hash (lowercase), a Cosmos hash (Sovren, Osmosis: uppercase hex) or a Solana signature (base58, case-sensitive).
             var txRaw = body?["tx"]?.ToString()?.Trim() ?? "";
             var tx = System.Text.RegularExpressions.Regex.IsMatch(txRaw, "^0x[0-9a-fA-F]{64}$") ? txRaw.ToLowerInvariant()
+                : System.Text.RegularExpressions.Regex.IsMatch(txRaw, "^[0-9a-fA-F]{64}$") ? txRaw.ToUpperInvariant()
                 : System.Text.RegularExpressions.Regex.IsMatch(txRaw, "^[1-9A-HJ-NP-Za-km-z]{64,90}$") ? txRaw : "";
             if (tx == "") return VError("tx must be a transaction hash.");
             var kind = body?["kind"]?.ToString();
