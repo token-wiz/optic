@@ -6,6 +6,10 @@
 //   - The fee is SOL spent at its value that day. Moves between your own Solana wallets keep their lots.
 //   - A swap (SOL for a token or back) is a disposal of what was given up at the value of the SOL side; what came back
 //     costs the same amount.
+//   - Cross-chain swaps: SOL arriving within minutes of a payment from your Ethereum-side wallets to a cross-chain solver
+//     (USDC / USDT, or ETH sent to a one-time address) of about the same value costs what was paid; SOL sent out shortly
+//     before USDC / USDT is delivered to one of those wallets is sold for that amount. Tokens moved between your own
+//     Solana wallets keep their lots, like SOL.
 //   - Plain transfers to or from other addresses are listed as not classified and never guessed; a receipt is kept at
 //     unknown cost until answered. Answers (titn-labels.json, keyed by transaction signature) work as on Ethereum.
 using OPTIC.Services;
@@ -23,6 +27,32 @@ public static partial class WebDashboard
         // Sold as "GNK" on Solana; the real GNK is the Gonka chain's coin (gonka1... addresses).
         ["AE36ntk1pza8rzKTsQ8QAmJHqL8adkBvzgzXvEM4mTFU"] = "GNK (fake, Solana)",
     };
+
+    // One side of a cross-chain swap seen in the Ethereum-side lots: a payment out (Pay) or a delivery in.
+    sealed class CrossLeg { public DateTime Time; public decimal Usd; public string What = ""; public bool Pay; public bool Used; }
+
+    // Payments to cross-chain solvers (and plain ETH / BNB sends nothing explains) and solver deliveries of USDC / USDT,
+    // from the Ethereum-side lots, so a Solana arrival or send minutes apart can be paired with them.
+    static List<CrossLeg> CrossChainLegs(JsonObject? evm)
+    {
+        var legs = new List<CrossLeg>();
+        if (evm is null) return legs;
+        static decimal D(JsonNode? n) => n is JsonValue v && v.TryGetValue<decimal>(out var d) ? d : 0m;
+        static DateTime T(JsonNode? n) => n is JsonValue v && v.TryGetValue<DateTime>(out var d) ? d.ToUniversalTime() : DateTime.MinValue;
+        foreach (var g in (evm["disposals"] as JsonArray ?? new()).OfType<JsonObject>()
+            .Where(d => (d["how"]?.ToString() ?? "") is var how && (how.Contains("paid to a cross-chain solver", StringComparison.Ordinal) || how.StartsWith("Sale (your answer)", StringComparison.Ordinal)))
+            .GroupBy(d => d["tx"]?.ToString() ?? ""))
+            legs.Add(new CrossLeg { Pay = true, Time = T(g.First()["sold"]), Usd = g.Sum(d => D(d["proceeds"])), What = $"{g.Sum(d => D(d["qty"])):N2} {g.First()["asset"]} on {g.First()["chain"]}" });
+        foreach (var u in (evm["unclassified"] as JsonArray ?? new()).OfType<JsonObject>()
+            .Where(u => u["direction"]?.ToString() == "out" && u["asset"]?.ToString() is "ETH" or "BNB" && D(u["valueThatDay"]) > 0))
+            legs.Add(new CrossLeg { Pay = true, Time = T(u["time"]), Usd = D(u["valueThatDay"]), What = $"{D(u["qty"]):0.######} {u["asset"]} on {u["chain"]} (sent to {u["counterparty"]?.ToString()[..10]}…)" });
+        // Deliveries: every slice of a "Delivered by a cross-chain solver" lot, held or sold since, summed per lot.
+        var slices = (evm["holdings"] as JsonArray ?? new()).OfType<JsonObject>().Select(h => (Id: h["id"]?.ToString(), How: h["how"]?.ToString() ?? "", Time: T(h["acquired"]), Qty: D(h["qty"]), Asset: h["asset"]?.ToString()))
+            .Concat((evm["disposals"] as JsonArray ?? new()).OfType<JsonObject>().Select(d => (Id: d["lot"]?.ToString(), How: d["lotHow"]?.ToString() ?? "", Time: T(d["acquired"]), Qty: D(d["qty"]), Asset: d["asset"]?.ToString())));
+        foreach (var g in slices.Where(x => x.How.StartsWith("Delivered by a cross-chain solver", StringComparison.Ordinal) && x.Asset is "USDC" or "USDT").GroupBy(x => x.Id))
+            legs.Add(new CrossLeg { Pay = false, Time = g.First().Time, Usd = Math.Round(g.Sum(x => x.Qty), 2), What = $"{g.Sum(x => x.Qty):N2} {g.First().Asset} delivered" });
+        return legs;
+    }
 
     sealed record SolTx(string Sig, DateTime Time, bool Failed, bool Payer, decimal Fee, decimal Sol, Dictionary<string, decimal> Tokens, List<string> SolFrom, List<string> SolTo, Dictionary<string, List<string>> TokenCps);
 
@@ -144,7 +174,7 @@ public static partial class WebDashboard
         return SolanaTokenNames[mint] = n;
     }
 
-    static async Task<JsonObject> BuildSolanaLotsAsync(List<(string Address, string Label)> wallets, JsonObject labels, bool refresh, CancellationToken ct)
+    static async Task<JsonObject> BuildSolanaLotsAsync(List<(string Address, string Label)> wallets, JsonObject labels, bool refresh, CancellationToken ct, List<CrossLeg>? cross = null)
     {
         var own = wallets.Select(w => w.Address).ToHashSet();
         var solPx = await LoadDailyPricesAsync(SolanaPriceKey, refresh, ct);
@@ -238,8 +268,9 @@ public static partial class WebDashboard
         }).ToArray());
 
         var snapYear = rows.Count > 0 ? rows.Min(r => r.Tx.Time).Year : DateTime.UtcNow.Year;
-        // Same transaction: the sending wallet first, so a move between your wallets is settled once.
-        foreach (var (wallet, t) in rows.OrderBy(r => r.Tx.Time).ThenBy(r => r.Tx.Sig).ThenBy(r => r.Tx.Sol >= 0 ? 1 : 0))
+        cross ??= new();
+        // Same transaction: the sending wallet first (SOL or a token out), so a move between your wallets is settled once.
+        foreach (var (wallet, t) in rows.OrderBy(r => r.Tx.Time).ThenBy(r => r.Tx.Sig).ThenBy(r => r.Tx.Sol < 0 || r.Tx.Tokens.Values.Any(v => v < 0) ? 0 : 1))
         {
             while (t.Time.Year > snapYear) { yearEnd[snapYear] = Snapshot(); snapYear++; }
             if (t.Fee > 0) Dispose(wallet, "SOL", t.Fee, SolUsd(t.Fee, t.Time), t.Time, t.Sig, "SOL spent on the network fee");
@@ -258,6 +289,14 @@ public static partial class WebDashboard
                 continue;
             }
             if (toks.Count == 0 && sol > 0 && t.SolFrom.Any(own.Contains) && !anyAnswer) { Acquire(wallet, "SOL", sol, SolUsd(sol, t.Time), t.Time, "From your own wallet (not matched to its send)"); continue; }
+            // A token moved to another of your Solana wallets (the SOL paid is the new account's rent).
+            if (toks.Count == 1 && sol <= 0 && -sol <= 0.0025m && !anyAnswer && toks.First().Value.Value < 0 && toks.First().Value.Cps.FirstOrDefault(own.Contains) is { } tdest)
+            {
+                Move(wallet, tdest, toks.First().Key, -toks.First().Value.Value);
+                handled.Add(tdest + "|" + t.Sig);
+                if (sol < 0) Dispose(wallet, "SOL", -sol, SolUsd(-sol, t.Time), t.Time, t.Sig, "SOL paid as account rent for the token transfer");
+                continue;
+            }
 
             // A swap: SOL against one token (in either direction), valued at the SOL side; or a token against USDC / USDT.
             var tokIn = toks.Where(kv => kv.Value.Value > 0).ToList(); var tokOut = toks.Where(kv => kv.Value.Value < 0).ToList();
@@ -287,6 +326,18 @@ public static partial class WebDashboard
             {
                 var q = Math.Abs(sol); var inbound = sol > 0;
                 if (Answered(wallet, t, "SOL", q, inbound, SolUsd(q, t.Time))) continue;
+                // A cross-chain swap: paid on an Ethereum-side network up to 10 minutes before the SOL arrived, or SOL sent up
+                // to 15 minutes before USDC / USDT was delivered there, for about the same value.
+                var leg = cross.Where(c => !c.Used && c.Pay == inbound && (inbound ? (t.Time - c.Time).TotalMinutes is >= -2 and <= 10 : (c.Time - t.Time).TotalMinutes is >= -2 and <= 15)
+                        && SolUsd(q, t.Time) is { } sv && c.Usd >= sv * 0.8m && c.Usd <= sv * 1.25m)
+                    .OrderBy(c => Math.Abs((c.Time - t.Time).TotalSeconds)).FirstOrDefault();
+                if (leg is not null)
+                {
+                    leg.Used = true;
+                    if (inbound) Acquire(wallet, "SOL", q, leg.Usd, t.Time, $"Bought across chains: paid {leg.What}");
+                    else Dispose(wallet, "SOL", q, leg.Usd, t.Time, t.Sig, $"Sold across chains for {leg.What}");
+                    continue;
+                }
                 if (inbound) Acquire(wallet, "SOL", q, null, t.Time, "Received from " + string.Join(",", t.SolFrom.Take(2)) + " (not classified, cost unknown)");
                 Unclassified(wallet, t, "SOL", q, inbound, inbound ? t.SolFrom.Take(2) : t.SolTo.Take(2), SolUsd(q, t.Time));
             }

@@ -9,6 +9,11 @@ public static partial class WebDashboard
 
     static readonly NavGroup[] NavGroups =
     {
+        // The Optio layer-one overview (it used to be the home page); the home page is now your own dashboard.
+        new("Chains", new NavPage[]
+        {
+            new("optio", "Optio", "The Optio layer-one blockchain: supply, staking, payouts and nodes"),
+        }),
         new("My OPT", new NavPage[]
         {
             new("my-wallets", "My Wallets", "Your saved wallets and exchanges"),
@@ -76,7 +81,7 @@ public static partial class WebDashboard
 
     static string PageHintHtml(string page)
     {
-        var hint = NavGroups.SelectMany(g => g.Pages).FirstOrDefault(p => p.Slug == page)?.Hint;
+        var hint = page == "dashboard" ? "Your portfolio, upcoming unlocks and rewards to claim" : NavGroups.SelectMany(g => g.Pages).FirstOrDefault(p => p.Slug == page)?.Hint;
         return hint is null ? "" : $@"<div class=""header-subtitle"">{WebUtility.HtmlEncode(hint)}</div>";
     }
 

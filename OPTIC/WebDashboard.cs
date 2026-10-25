@@ -2337,7 +2337,13 @@ public static partial class WebDashboard
         sb.Append(header);
         sb.Append(DashboardSettings.BootScript(ctx));
         
+        // Home: your portfolio with reminders (the same card as on My Wallets). The Optio overview is Chains > Optio.
         if (page == "dashboard")
+        {
+            AppendMyWalletsScript(sb);
+            AppendPortfolioCard(sb);
+        }
+        else if (page == "optio")
             GetDashboardContent(sb);
         else
             GetPageContent(sb, page);
@@ -4486,7 +4492,87 @@ public static partial class WebDashboard
                         .ad-config { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 12px; }
                         .ad-config .form-group { margin-bottom: 0; }
                         .ad-config small { color: var(--text-secondary); }
+                        .ad-tabs { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+                        .ad-tabs button { font-size: 13px; padding: 6px 16px; border-radius: 999px; background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); text-transform: none; letter-spacing: 0; }
+                        .ad-tabs button[aria-selected=""true""] { background: var(--accent-primary); color: var(--bg-primary); border-color: var(--accent-primary); }
+                        .ad-yes { color: var(--success, #107c10); font-weight: 600; }
+                        .ad-no { color: var(--text-muted); }
                     </style>
+                    <div class=""ad-tabs"" role=""tablist"" aria-label=""Admin sections"">
+                        <button type=""button"" role=""tab"" data-ad-tab=""general"" aria-selected=""true"">Users &amp; server</button>
+                        <button type=""button"" role=""tab"" data-ad-tab=""chains"" aria-selected=""false"">Chains</button>
+                    </div>
+                    <div class=""card"" id=""ad-chains"" style=""grid-column: 1 / -1;"" hidden>
+                        <h2>Supported chains</h2>
+                        <div class=""card-content"">
+                            <p class=""ad-note"">The networks OPTIC reads, what it reads on each, and whether its data sources are answering right now. Read-only: how each chain is handled is built into the cost engines, so nothing here changes tax figures.</p>
+                            <div class=""data-table-wrap pnl-table-wrap"" style=""margin-bottom: 16px;"">
+                                <table class=""data-table"">
+                                    <thead><tr><th>Chain</th><th>Addresses</th><th>Assets tracked</th><th>Balances</th><th>History &amp; taxes</th><th>Prices</th><th style=""text-align: right;"">Saved addresses</th><th>Notes</th></tr></thead>
+                                    <tbody id=""ad-chain-list""><tr><td colspan=""8"" style=""color: var(--text-secondary);"">Loading…</td></tr></tbody>
+                                </table>
+                            </div>
+                            <div class=""ad-row"" style=""align-items: center; margin-bottom: 6px;"">
+                                <strong>Data sources</strong>
+                                <button type=""button"" id=""ad-chain-check"" style=""font-size: 11px; padding: 3px 10px;"">Check again</button>
+                                <span id=""ad-chain-status"" class=""ad-note"" style=""margin: 0;""></span>
+                            </div>
+                            <div class=""data-table-wrap pnl-table-wrap"" style=""margin-bottom: 16px;"">
+                                <table class=""data-table"">
+                                    <thead><tr><th>Chain</th><th>Source</th><th>Status</th><th style=""text-align: right;"">Response</th><th>Detail</th><th>Address</th></tr></thead>
+                                    <tbody id=""ad-chain-checks""></tbody>
+                                </table>
+                            </div>
+                            <strong>Saved histories</strong>
+                            <p class=""ad-note"" style=""margin: 4px 0;"">Copies of each wallet&#39;s history kept on this server so reports load without reading every chain again.</p>
+                            <div class=""data-table-wrap pnl-table-wrap"">
+                                <table class=""data-table"">
+                                    <thead><tr><th>Chain</th><th style=""text-align: right;"">Files</th><th style=""text-align: right;"">Size</th><th>Oldest update</th><th>Newest update</th></tr></thead>
+                                    <tbody id=""ad-chain-caches""></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <script>
+                        (function () {
+                            const $ = (id) => document.getElementById(id);
+                            const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
+                            const NAME = { optio: 'Optio', osmosis: 'Osmosis', ethereum: 'Ethereum', base: 'Base', arbitrum: 'Arbitrum', bsc: 'BNB Chain', solana: 'Solana', gonka: 'Gonka', prices: 'Prices' };
+                            const when = (v) => v ? new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '–';
+                            const yes = (b) => b ? '<span class=""ad-yes"">✓</span>' : '<span class=""ad-no"">–</span>';
+                            let loaded = false;
+                            const load = async () => {
+                                $('ad-chain-check').disabled = true;
+                                $('ad-chain-status').textContent = 'Checking every data source…';
+                                try {
+                                    const r = await fetch('/api/admin/chains');
+                                    const j = await r.json();
+                                    if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+                                    const addr = j.addresses || {};
+                                    $('ad-chain-list').innerHTML = j.chains.map(c => `<tr><td><strong>${esc(c.name)}</strong></td><td style=""white-space: nowrap;"">${esc(c.address)}</td><td>${esc(c.assets.join(', '))}</td><td>${yes(c.balances)}</td><td>${yes(c.history)}</td><td style=""font-size: 12px;"">${esc(c.prices)}</td>
+                                        <td class=""amount-cell"">${['ethereum', 'base', 'arbitrum', 'bsc'].includes(c.id) ? (addr.evm || 0) + ' <span style=""font-size: 11px; color: var(--text-muted);"">0x…</span>' : (addr[c.id] || 0)}</td><td style=""font-size: 12px;"">${esc(c.notes)}</td></tr>`).join('');
+                                    const bad = j.checks.filter(c => !c.ok);
+                                    $('ad-chain-checks').innerHTML = j.checks.map(c => `<tr><td>${esc(NAME[c.chain] || c.chain)}</td><td>${esc(c.source)}</td><td>${c.ok ? '<span class=""ad-badge ok"">OK</span>' : '<span class=""ad-badge warn"">Not answering</span>'}</td><td class=""amount-cell"">${c.ms.toLocaleString('en-US')} ms</td><td style=""font-size: 12px;"">${esc(c.detail)}</td><td class=""address-cell"" style=""font-size: 11px;"">${esc(c.url)}</td></tr>`).join('');
+                                    $('ad-chain-caches').innerHTML = j.caches.map(c => `<tr><td>${esc(NAME[c.chain] || c.chain)}</td><td class=""amount-cell"">${c.files}</td><td class=""amount-cell"">${c.sizeKb.toLocaleString('en-US')} KB</td><td>${when(c.oldest)}</td><td>${when(c.newest)}</td></tr>`).join('');
+                                    $('ad-chain-status').textContent = `Checked ${when(j.checkedUtc)}: ${j.checks.length - bad.length} of ${j.checks.length} answering.` + (bad.length ? ' A source that is not answering is skipped for a backup where there is one; reports use their saved copies.' : '');
+                                    loaded = true;
+                                } catch (e) {
+                                    $('ad-chain-status').textContent = 'Could not check: ' + e.message;
+                                } finally { $('ad-chain-check').disabled = false; }
+                            };
+                            $('ad-chain-check').addEventListener('click', load);
+                            // Tabs: the Chains card, or every other card on this page.
+                            const show = (tab) => {
+                                document.querySelectorAll('[data-ad-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.adTab === tab)));
+                                document.querySelectorAll('.card').forEach(c => { c.hidden = (c.id === 'ad-chains') !== (tab === 'chains'); });
+                                if (tab === 'chains' && !loaded) load();
+                                history.replaceState(null, '', tab === 'chains' ? '#chains' : location.pathname + location.search);
+                            };
+                            document.querySelectorAll('[data-ad-tab]').forEach(b => b.addEventListener('click', () => show(b.dataset.adTab)));
+                            const start = () => show(location.hash === '#chains' ? 'chains' : 'general');
+                            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else setTimeout(start, 0);
+                        })();
+                    </script>
                     <div class=""card"" style=""grid-column: 1 / -1;"">
                         <h2>Users</h2>
                         <div class=""card-content"">

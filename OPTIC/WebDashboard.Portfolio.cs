@@ -8,9 +8,13 @@ public static partial class WebDashboard
 
     const string PortfolioHtml = """
         <div class="card" style="grid-column: 1 / -1;" id="pf-card">
-            <h2>Portfolio</h2>
+            <h2 style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;">Portfolio<a id="pf-manage" href="/page/my-wallets" style="font-size: 12px; font-weight: 400;">Manage wallets</a></h2>
             <div class="card-content">
                 <div id="pf-status" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">Reading your wallets…</div>
+                <div id="pf-remind" hidden style="border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px;">
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px;"><strong style="font-size: 14px;">Reminders</strong><span id="pf-remind-note" style="font-size: 12px; color: var(--text-secondary);"></span><button type="button" id="pf-remind-all" style="font-size: 11px; padding: 2px 10px; margin-left: auto;">Add all to calendar</button></div>
+                    <div id="pf-remind-list" style="display: flex; flex-direction: column; gap: 4px; font-size: 13px;"></div>
+                </div>
                 <div id="pf-tiles" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 10px;"></div>
                 <div class="data-table-wrap">
                     <table class="data-table">
@@ -39,13 +43,66 @@ public static partial class WebDashboard
                 const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka', solana: 'Solana', optio: 'Optio' };
                 // One request per page for data the Portfolio and My Wallets cards both read.
                 window.opticGet = window.opticGet || (() => { /* Last visit's answers (saved in this browser per user) are returned at once and replaced when the fresh ones arrive; each arrival fires 'optic-fresh' so the page can redraw. */ const mem = {}, key = (u) => 'optic.cache.' + ((window.opticUser || {}).name || '') + '.' + u; let timer = null; const get = (u) => { if (mem[u]) return mem[u]; let old = null; try { old = JSON.parse(localStorage.getItem(key(u)) || 'null'); } catch (e) { } const live = fetch(u).then(r => r.ok ? r.json() : null).then(j => { if (j) { try { localStorage.setItem(key(u), JSON.stringify({ t: Date.now(), j })); } catch (e) { } } return j; }); if (!old || !old.j) return mem[u] = live; get.cachedAt = Math.min(get.cachedAt || Infinity, old.t); get.waiting = (get.waiting || 0) + 1; live.catch(() => null).then(j => { mem[u] = Promise.resolve(j || old.j); get.waiting--; clearTimeout(timer); timer = setTimeout(() => window.dispatchEvent(new Event('optic-fresh')), 300); }); return mem[u] = Promise.resolve(old.j); }; return get; })();
+                if (location.pathname.endsWith('/my-wallets')) $('pf-manage').hidden = true; // the wallet list is right below
                 const ORDER = ['USDC', 'OPT', 'TITN', 'NILA', 'GNK', 'TGT', 'PATRIOT', 'ETH', 'SOL', 'BNB', 'USDT', 'OSMO']; // cash (USDC) first
+                // Reminders: unlock dates and rewards ready to claim, from the staked positions. Each can go to your calendar
+                // (an .ics file your phone or computer opens), so the reminder comes from your own calendar app.
+                let reminders = [];
+                const dayMs = 86400000;
+                const renderReminders = (stakes) => {
+                    const now = Date.now(), list = [];
+                    const fmtAmt = (v, a) => Number(v).toLocaleString('en-US', { maximumFractionDigits: a === 'OPT' || a === 'NILA' ? 0 : 2 });
+                    for (const st of stakes) {
+                        const ra = st.rewardAsset || st.asset;
+                        if (st.unlocks) {
+                            const t = Date.parse(st.unlocks), days = Math.ceil((t - now) / dayMs);
+                            const what = st.where.includes('unbonding') ? 'finishes unbonding' : 'unlocks';
+                            if (days > 0) list.push({ t, ready: false, title: `${fmtAmt(st.amount, st.asset)} ${st.asset} ${what}`, detail: st.where + (st.atUnlock ? ` · reward at unlock ${fmtAmt(st.atUnlock, ra)} ${ra}` : ''), days });
+                            else if (st.asset === 'NILA') list.push({ t, ready: true, title: `${fmtAmt(st.amount, 'NILA')} NILA unlocked${st.earned > 0 ? ` with ${fmtAmt(st.earned, 'NILA')} NILA reward` : ''}`, detail: st.where + ' · claiming is paused on the V1 staking site until the MindChain migration' });
+                        } else if (st.earned > 0.005 && st.rewardAsset === 'USDC') {
+                            list.push({ t: now, ready: true, title: `${fmtAmt(st.earned, 'USDC')} USDC rewards ready to claim`, detail: `${st.asset} staking · ${st.where}` });
+                        }
+                    }
+                    list.sort((x, y) => (y.ready - x.ready) || (x.t - y.t));
+                    reminders = list.filter(r => r.ready || r.days <= 400);
+                    $('pf-remind').hidden = !reminders.length;
+                    const ready = reminders.filter(r => r.ready).length;
+                    $('pf-remind-note').textContent = ready ? `${ready} ready now` : `next in ${reminders[0]?.days ?? 0} days`;
+                    $('pf-remind-list').innerHTML = reminders.slice(0, 8).map((r, i) => `<div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;">
+                        <span style="min-width: 92px; font-weight: 600; ${r.ready ? 'color: var(--success, #107c10);' : ''}">${r.ready ? 'Ready now' : new Date(r.t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>
+                        <span>${esc(r.title)}${r.ready ? '' : ` <span style="color: var(--text-secondary);">(in ${r.days} day${r.days === 1 ? '' : 's'})</span>`}<div style="font-size: 11px; color: var(--text-secondary);">${esc(r.detail)}</div></span>
+                        ${r.ready ? '' : `<button type="button" data-remind="${i}" style="font-size: 11px; padding: 1px 8px; margin-left: auto;">Add to calendar</button>`}</div>`).join('')
+                        + (reminders.length > 8 ? `<div style="font-size: 12px; color: var(--text-secondary);">and ${reminders.length - 8} more in the Staked table below</div>` : '');
+                };
+                // An all-day calendar event on the date, with an alert the morning before.
+                const ics = (items) => {
+                    const d = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
+                    const txt = (v) => String(v).replace(/[\\,;]/g, m => '\\' + m).replace(/\n/g, ' ');
+                    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+                    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OPTIC//Reminders//EN'].concat(items.flatMap((r, i) => ['BEGIN:VEVENT', `UID:optic-${d(r.t)}-${i}-${r.title.length}@optic`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d(r.t)}`, `DTEND;VALUE=DATE:${d(r.t + dayMs)}`,
+                        `SUMMARY:${txt(r.title)}`, `DESCRIPTION:${txt(r.detail + ' (from OPTIC)')}`, 'BEGIN:VALARM', 'TRIGGER:-PT15H', 'ACTION:DISPLAY', `DESCRIPTION:${txt(r.title)}`, 'END:VALARM', 'END:VEVENT']), ['END:VCALENDAR']).join('\r\n');
+                };
+                const saveIcs = (items, name) => {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(new Blob([ics(items)], { type: 'text/calendar' }));
+                    a.download = name;
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                };
+                document.getElementById('pf-remind-list').addEventListener('click', (e) => {
+                    const b = e.target.closest('[data-remind]');
+                    if (b) saveIcs([reminders[Number(b.dataset.remind)]], 'optic-reminder.ics');
+                });
+                document.getElementById('pf-remind-all').addEventListener('click', () => {
+                    const upcoming = reminders.filter(r => !r.ready);
+                    if (upcoming.length) saveIcs(upcoming, 'optic-reminders.ics');
+                });
                 const start = async () => {
                     const W = window.opticWallets;
                     if (!W) { setTimeout(start, 200); return; }
                     const name = (a) => W.label(a) || (a.slice(0, 6) + '…' + a.slice(-4));
                     const saved = W.listSaved();
-                    if (!saved.length) { $('pf-status').textContent = 'Add your wallets below to see your portfolio.'; return; }
+                    if (!saved.length) { $('pf-status').innerHTML = 'Add your wallets on <a href="/page/my-wallets">My Wallets</a> to see your portfolio.'; return; }
                     // asset -> { total, parts: [{ where, amount, note }] }
                     const assets = {}, prices = {}, priceNote = {};
                     // Staked positions: { asset, where, amount, since, unlocks, unlockNote, earned, atUnlock, rewardAsset }
@@ -80,6 +137,7 @@ public static partial class WebDashboard
                                 `<td style="text-align: right; white-space: nowrap;">${s.atUnlock != null ? qty(s.atUnlock, ra) + ' ' + esc(ra) : '–'}</td><td style="text-align: right; white-space: nowrap;" title="Staked amount plus rewards earned so far, at today\x27s price">${value != null ? usd(value) : '–'}</td></tr>`;
                         }).join('') || '<tr><td colspan="8" style="text-align: center; color: var(--text-secondary);">' + (loading ? 'Reading your stakes…' : 'Nothing staked.') + '</td></tr>';
                         $('pf-stake-status').textContent = stakeNote;
+                        renderReminders(stakes);
                         $('pf-status').textContent = loading ? 'Still reading some wallets…' : `Values at today\x27s prices (OPT: ${priceNote.OPT || 'latest available'}). Staked and unbonding amounts are included and noted; OPT locked in staking cannot be sold until it is unlocked.`;
                     };
                     let stakeNote = '';

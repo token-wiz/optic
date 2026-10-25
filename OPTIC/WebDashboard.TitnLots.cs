@@ -100,7 +100,7 @@ public static partial class WebDashboard
                     : new { disposals = Array.Empty<object>(), holdings = Array.Empty<object>(), unclassified = Array.Empty<object>(), notes = Array.Empty<string>() };
                 if (solana.Count == 0) return VJson(evm);
                 // Solana wallets: their own history, merged into the same lists (a failure there leaves the rest intact).
-                try { return VJson(MergeSolanaLots(evm, await BuildSolanaLotsAsync(solana, labels, refresh, ctx.RequestAborted))); }
+                try { return VJson(MergeSolanaLots(evm, await BuildSolanaLotsAsync(solana, labels, refresh, ctx.RequestAborted, CrossChainLegs(JsonSerializer.SerializeToNode(evm) as JsonObject)))); }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
                 {
                     var node = JsonSerializer.SerializeToNode(evm) as JsonObject ?? new JsonObject();
