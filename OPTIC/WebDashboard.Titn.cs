@@ -76,17 +76,30 @@ public static partial class WebDashboard
         ("arbitrum", "0xaf88d065e77c8cc2239327c5edb3a432268e5831", "USDC"), ("arbitrum", "0xff970a61a04b1ca14834a43f5de4533ebddb5cc8", "USDC.e"),
         ("base", TitnToken, "TITN"), ("arbitrum", TitnToken, "TITN"),
         ("arbitrum", "0x429fed88f10285e61b12bdf00848315fbdfcc341", "TGT"), ("ethereum", "0x108a850856db3f85d0269a2693d896b394c80325", "TGT"),
+        ("ethereum", "0xdac17f958d2ee523a2206206994597c13d831ec7", "USDT"), ("ethereum", PatriotToken, "PATRIOT"),
+        ("bsc", NilaToken, "NILA"), ("bsc", BscUsdt, "USDT"), ("bsc", BscUsdc, "USDC"),
     };
 
-    // Balances of ETH, USDC, TITN and TGT on Ethereum, Arbitrum and Base for the user's saved 0x... wallets (10-minute cache).
-    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null)
+    // Balances of ETH, BNB, USDC, USDT, TITN, TGT, NILA and PATRIOT on Ethereum, Arbitrum, Base and BNB Chain for the user's saved 0x... wallets (10-minute cache).
+    static async Task<object> BuildEvmBalancesAsync(List<(string Address, string Label)> wallets, CancellationToken ct, List<(string Address, string Label)>? osmoWallets = null, List<(string Address, string Label)>? gonkaWallets = null)
     {
         var ethPx = await LoadDailyPricesAsync("coingecko:ethereum", false, ct);
         var titnPx = await LoadDailyPricesAsync(TitnPriceKey, false, ct);
         var tgtPx = await LoadDailyPricesAsync(TgtPriceKey, false, ct);
         decimal Last(SortedDictionary<string, decimal> s) => s.Count > 0 ? s.Last().Value : 0m;
         var px = new Dictionary<string, decimal> { ["ETH"] = Last(ethPx), ["USDC"] = 1m, ["USDC.e"] = 1m, ["USDT"] = 1m, ["TITN"] = Last(titnPx), ["TGT"] = Last(tgtPx) };
+        foreach (var (sym, key) in new[] { ("BNB", BnbPriceKey), ("NILA", NilaPriceKey), ("PATRIOT", PatriotPriceKey) })
+        {
+            try { px[sym] = Last(await LoadDailyPricesAsync(key, false, ct)); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+        }
         osmoWallets ??= new();
+        gonkaWallets ??= new();
+        if (gonkaWallets.Count > 0)
+        {
+            try { px["GNK"] = Last(await LoadDailyPricesAsync(GonkaPriceKey, false, ct)); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+        }
         if (osmoWallets.Count > 0)
         {
             px["OSMO"] = Last(await LoadDailyPricesAsync("coingecko:osmosis", false, ct));
@@ -101,8 +114,14 @@ public static partial class WebDashboard
             else
             {
                 cached = new JsonObject();
-                foreach (var chain in EvmExplorersAll.Keys)
+                foreach (var chain in EvmChainsAll)
                 {
+                    if (chain == "bsc")
+                    {
+                        try { cached[chain] = await LoadBscBalancesAsync(w.Address, ct); }
+                        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { cached[chain] = new JsonObject(); }
+                        continue;
+                    }
                     var row = new JsonObject();
                     try
                     {
@@ -161,6 +180,15 @@ public static partial class WebDashboard
             var rows = bals.GroupBy(b => b.Symbol).Select(g => new { symbol = g.Key, amount = g.Sum(b => b.Amount), usd = Math.Round(g.Sum(b => b.Amount) * (px.TryGetValue(g.Key, out var pp) ? pp : 0m), 2) }).ToList();
             result.Add(new { address = o.Address, label = o.Label, chains = new[] { new { chain = "osmosis", balances = rows } }, usd = rows.Sum(b => b.usd) });
         }
+        // Gonka accounts: GNK, and USDT / USDC that came over IBC (current balances only).
+        foreach (var g in gonkaWallets)
+        {
+            List<(string Symbol, decimal Amount)> bals;
+            try { bals = await LoadGonkaBalancesAsync(g.Address, ct); }
+            catch (HttpRequestException) { bals = new(); }
+            var rows = bals.Select(b => new { symbol = b.Symbol, amount = b.Amount, usd = Math.Round(b.Amount * (px.TryGetValue(b.Symbol, out var pp) ? pp : 0m), 2) }).ToList();
+            result.Add(new { address = g.Address, label = g.Label, chains = new[] { new { chain = "gonka", balances = rows } }, usd = rows.Sum(b => b.usd) });
+        }
         return new { wallets = result, prices = px };
     }
 
@@ -179,7 +207,7 @@ public static partial class WebDashboard
         app.MapGet("/api/evm/balances", async (HttpContext ctx) =>
         {
             var wallets = UserEvmWallets(ctx);
-            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx))); }
+            try { return VJson(await BuildEvmBalancesAsync(wallets, ctx.RequestAborted, UserOsmoWallets(ctx), UserGonkaWallets(ctx))); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return VError("Could not read your balances: " + ex.Message, 502); }
         });
         app.MapGet("/api/titn/summary", async (HttpContext ctx) =>
@@ -209,6 +237,7 @@ public static partial class WebDashboard
     // Every ERC-20 transfer in or out of the address on one chain; new pages only after the first load (cached 3 hours).
     static async Task<List<EvmTransfer>> LoadEvmTransfersAsync(string chain, string address, bool refresh, CancellationToken ct)
     {
+        if (chain == "bsc") return await LoadBscTransfersAsync(address, refresh, ct);
         var path = EvmCachePath(chain, address);
         var cache = File.Exists(path) ? JsonNode.Parse(await File.ReadAllTextAsync(path, ct))!.AsObject() : new JsonObject { ["items"] = new JsonArray() };
         if ((int?)cache["version"] != 2) cache = new JsonObject { ["version"] = 2, ["items"] = new JsonArray() }; // version 2 keeps each transfer's method
@@ -305,9 +334,10 @@ public static partial class WebDashboard
             var own = wallets.Select(w => w.Address).ToHashSet();
             var transfers = new List<(string Chain, string Wallet, EvmTransfer T)>();
             foreach (var w in wallets)
-                foreach (var chain in EvmExplorers.Keys)
+                foreach (var chain in EvmExplorers.Keys.Append("bsc"))
                     transfers.AddRange((await LoadEvmTransfersAsync(chain, w.Address, refresh, ct)).Select(t => (chain, w.Address, t)));
             var prices = await LoadDailyPricesAsync(TitnPriceKey, refresh, ct);
+            var nilaPrices = await LoadDailyPricesAsync(NilaPriceKey, refresh, ct);
             var tgtPrices = await LoadDailyPricesAsync(TgtPriceKey, refresh, ct);
             // The day's price, or the nearest earlier day within 3 days when DefiLlama has a gap.
             (decimal? Price, bool Earlier) PriceOnDay(DateTime t)
@@ -325,6 +355,21 @@ public static partial class WebDashboard
             {
                 if (t.To != wallet || t.Amount < 0.000001m) continue;
                 if (own.Contains(t.From)) continue; // between your own wallets
+                if (chain == "bsc")
+                {
+                    // NILA staking: claimReward pays the reward (income at that day's price); withdraw returns your stake.
+                    if (t.From != NilaStakingContract || t.Token != NilaToken || t.Method != NilaClaimSelector) continue;
+                    decimal? np = null;
+                    for (var i = 0; i < 4 && np is null; i++) if (nilaPrices.TryGetValue(t.Time.AddDays(-i).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), out var pp)) np = pp;
+                    rewards.Add(new
+                    {
+                        time = t.Time, chain, wallet, source = "NILA staking", kind = "staking", symbol = "NILA", token = t.Token, earnedFrom = "NILA",
+                        amount = t.Amount, priceUsd = np, usd = np is { } p ? Math.Round(t.Amount * p, 2) : (decimal?)null,
+                        priceSource = np is null ? "No NILA price for this day" : "DefiLlama daily price (NILA, CoinGecko mindwavedao)",
+                        tx = t.Tx,
+                    });
+                    continue;
+                }
                 if (TitnRewardSources.TryGetValue(t.From, out var src) && src.Chain == chain)
                 {
                     if (TitnPrincipalTokens.Contains(t.Token) && src.Kind == "staking") continue; // your stake coming back

@@ -4768,7 +4768,8 @@ public static partial class WebDashboard
                             const validAny = (a) => valid(a) || validOsmo(a);
                             // Ethereum / Base / Arbitrum addresses are saved for reference only; no report reads them.
                             const validEvm = (a) => /^0x[0-9a-f]{40}$/.test(String(a || ''));
-                            const validSaved = (a) => validAny(a) || validEvm(a);
+                            const validGonka = (a) => /^gonka1[02-9ac-hj-np-z]{38,58}$/.test(String(a || ''));
+                            const validSaved = (a) => validAny(a) || validEvm(a) || validGonka(a);
                             const esc = (v) => String(v ?? '').replace(/[&<>\x22\x27]/g, ch => '&#' + ch.charCodeAt(0) + ';');
                             const short = (a) => a.length > 20 ? a.slice(0, 12) + '...' + a.slice(-6) : a;
 
@@ -4842,6 +4843,7 @@ public static partial class WebDashboard
                                 validAny,
                                 validOsmo,
                                 validEvm,
+                                validGonka,
                                 validSaved,
                                 list,
                                 listAll,
@@ -4856,6 +4858,24 @@ public static partial class WebDashboard
                                 primary: () => (list().find(w => w.p) || {}).a || null,
                                 add: (a, l) => save([...list(), { a, l: l || '', p: false }]),
                                 remove: (a) => save(listSaved().filter(w => w.a !== String(a || '').toLowerCase()), false),
+                                // Node payouts to one address, or (no address) to every saved Optio wallet: merged by time, each row
+                                // tagged with its wallet when there is more than one. address is '' for the combined view.
+                                distributions: async (address) => {
+                                    const get = async (a, named) => {
+                                        const r = await fetch('/api/distributions/address?address=' + encodeURIComponent(a));
+                                        const d = await r.json();
+                                        if (!r.ok) throw new Error((named ? (label(a) || a) + ': ' : '') + (d.error || 'Request failed'));
+                                        return d;
+                                    };
+                                    if (address) return get(address, false);
+                                    const mine = list();
+                                    if (!mine.length) throw new Error('Save your Optio wallets on My Wallets, or enter an address.');
+                                    if (mine.length === 1) return { ...(await get(mine[0].a, false)), address: '', wallets: [mine[0].a] };
+                                    const all = await Promise.all(mine.map(w => get(w.a, true)));
+                                    const rows = all.flatMap((d, i) => (d.rows || []).map(r => ({ ...r, wallet: mine[i].l || mine[i].a.slice(0, 10) + '…', walletAddress: mine[i].a })))
+                                        .sort((x, y) => String(x.timeUtc).localeCompare(String(y.timeUtc)));
+                                    return { ...all[0], address: '', wallets: mine.map(w => w.a), rows, truncated: all.some(d => d.truncated) };
+                                },
 
                                 // Row of one-click buttons for the user's wallets; onPick(address) switches to one.
                                 renderSwitcher: (el, current, onPick, all = false) => {
@@ -5231,8 +5251,8 @@ public static partial class WebDashboard
                             <div id=""le-controls"">
                                 <form id=""le-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px;"">
                                     <div class=""form-group"" style=""flex: 1 1 380px; margin-bottom: 0;"">
-                                        <label for=""le-address"">Your wallet (distributions received)</label>
-                                        <input type=""text"" id=""le-address"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"">
+                                        <label for=""le-address"">Wallet (leave blank for all your wallets)</label>
+                                        <input type=""text"" id=""le-address"" placeholder=""All my Optio wallets, or paste an optio1... address"" autocomplete=""off"" spellcheck=""false"">
                                     </div>
                                     <div class=""form-group"" style=""flex: 0 0 120px; margin-bottom: 0;"">
                                         <label for=""le-year"">Tax year</label>
@@ -5258,7 +5278,6 @@ public static partial class WebDashboard
                                     <button type=""submit"" id=""le-submit"">Build report</button>
                                     <button type=""button"" id=""le-print"" class=""le-no-print"" disabled>Print / Save as PDF</button>
                                 </form>
-                                <div id=""le-wallets"" style=""font-size: 13px; color: var(--text-secondary); margin: 0 0 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;""></div>
                                 <div id=""le-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 12px;"">Builds a printable report from the Optio chain, Coinstore, CoinMarketCap, CoinGecko, MEXC and Osmosis. The first run can take a few minutes.</div>
                             </div>
                             <div id=""le-report"" hidden>
@@ -5400,7 +5419,8 @@ public static partial class WebDashboard
                                 const v = params.get(key);
                                 if (v && [...el.options].some(o => o.value === v)) el.value = v;
                             }
-                            addressInput.value = params.get('address') || window.opticWallets.primary() || '';
+                            // No address in the link: all saved Optio wallets together.
+                            addressInput.value = params.get('address') || '';
 
                             let data = null;
 
@@ -5577,7 +5597,7 @@ public static partial class WebDashboard
                                 const basisText = a.basis === 'reported' ? 'the volume exchanges reported' : 'OPT actually withdrawn from Coinstore on chain';
                                 const short = (addr) => addr.slice(0, 12) + '…' + addr.slice(-6);
 
-                                $('le-print-header').innerHTML = `Prepared ${esc(new Date().toISOString().slice(0, 16).replace('T', ' '))} UTC with OPTIC · Wallet ${esc(dist.address)} · Period: ${esc(period)} · Market volume basis: ${esc(basisText)}, ${fmtPct(a.share)} sellable`;
+                                $('le-print-header').innerHTML = `Prepared ${esc(new Date().toISOString().slice(0, 16).replace('T', ' '))} UTC with OPTIC · ${dist.address ? 'Wallet ' + esc(dist.address) : 'All my Optio wallets: ' + esc((dist.wallets || []).join(', '))} · Period: ${esc(period)} · Market volume basis: ${esc(basisText)}, ${fmtPct(a.share)} sellable`;
 
                                 const findings = [];
                                 findings.push(`<strong>You received ${fmtOpt(youOpt)} OPT</strong> in ${payoutRows.length.toLocaleString('en-US')} distribution payouts during ${esc(period)}, worth ${fmtUsd(youValue)} at the quoted daily price.`);
@@ -5744,19 +5764,20 @@ public static partial class WebDashboard
                             };
 
                             const run = async () => {
-                                const address = addressInput.value.trim();
-                                if (!/^optio1[02-9ac-hj-np-z]{38,58}$/.test(address)) { status.textContent = 'Enter your optio1... wallet address (or save it as primary on My Wallets).'; return; }
-                                const q = new URLSearchParams({ address });
+                                const address = addressInput.value.trim().toLowerCase();
+                                if (address && !/^optio1[02-9ac-hj-np-z]{38,58}$/.test(address)) { status.textContent = 'Enter an optio1... wallet address, or leave it blank for all your wallets.'; return; }
+                                const q = new URLSearchParams();
+                                if (address) q.set('address', address);
                                 if (yearSelect.value) q.set('year', yearSelect.value);
                                 if (basisSelect.value !== 'withdrawals') q.set('basis', basisSelect.value);
                                 if (shareSelect.value !== '0.1') q.set('share', shareSelect.value);
-                                history.replaceState(null, '', '?' + q.toString());
+                                history.replaceState(null, '', q.toString() ? '?' + q.toString() : location.pathname);
                                 const done = window.opticBusy(submit, status, 'Reading the chain and market history');
                                 status.textContent = 'Reading Coinstore deposits and withdrawals, market history and your distributions...';
                                 try {
                                     const [{ market, flows }, dist, listing, evidence] = await Promise.all([
                                         window.opticMarket.load(),
-                                        getJson('/api/distributions/address?address=' + encodeURIComponent(address)),
+                                        window.opticWallets.distributions(address),
                                         getJson('/api/market/status'),
                                         fetch('/api/market/evidence/latest').then(r => r.json()).catch(() => null),
                                     ]);
@@ -5765,7 +5786,6 @@ public static partial class WebDashboard
                                     data = { market, flows, dist, listing, evidence, quote };
                                     render();
                                     status.textContent = flows.truncated ? 'Note: the Coinstore history hit the 20,000-transaction cap; older activity may be missing.' : '';
-                                    renderWallets();
                                 } catch (error) {
                                     status.textContent = 'Error: ' + error.message;
                                 } finally {
@@ -5773,11 +5793,8 @@ public static partial class WebDashboard
                                 }
                             };
 
-                            const renderWallets = () => window.opticWallets.renderSwitcher($('le-wallets'), addressInput.value.trim() || null, (address) => { addressInput.value = address; run(); });
-                            renderWallets();
-
                             form.addEventListener('submit', (e) => { e.preventDefault(); run(); });
-                            for (const el of [yearSelect, basisSelect, shareSelect]) el.addEventListener('change', () => { if (data && data.dist.address === addressInput.value.trim()) run(); });
+                            for (const el of [yearSelect, basisSelect, shareSelect]) el.addEventListener('change', () => { if (data && data.dist.address === addressInput.value.trim().toLowerCase()) run(); });
                             $('le-print').addEventListener('click', () => window.print());
                             $('le-capture').addEventListener('click', async () => {
                                 const btn = $('le-capture');
@@ -5793,7 +5810,7 @@ public static partial class WebDashboard
                                 }
                             });
 
-                            if (addressInput.value) run();
+                            run();
                         })();
                     </script>");
     }
@@ -5868,7 +5885,7 @@ public static partial class WebDashboard
                                             <option value=""staking"">Staking only</option>
                                         </select>
                                     </div>
-                                    <div class=""form-group tr-report-only"" style=""flex: 0 0 220px; margin-bottom: 0;"" title=""OPT only, or every crypto asset in your saved wallets (OPT, TITN, TGT, ETH and USDC)"">
+                                    <div class=""form-group tr-report-only"" style=""flex: 0 0 220px; margin-bottom: 0;"" title=""OPT only, or every crypto asset in your saved wallets (OPT, TITN, TGT, NILA, PATRIOT, ETH, BNB and USDC)"">
                                         <label for=""tr-assets"">Assets shown</label>
                                         <select id=""tr-assets"">
                                             <option value="""">All my crypto assets</option>
@@ -5877,6 +5894,9 @@ public static partial class WebDashboard
                                             <option value=""TITN"">TITN only</option>
                                             <option value=""TGT"">TGT only</option>
                                             <option value=""USDC"">USDC only</option>
+                                            <option value=""NILA"">NILA only</option>
+                                            <option value=""BNB"">BNB only</option>
+                                            <option value=""PATRIOT"">PATRIOT only</option>
                                         </select>
                                     </div>
                                     <div class=""form-group tr-report-only"" style=""flex: 0 0 200px; margin-bottom: 0;"" title=""Show everything, or only activity on one network"">
@@ -5888,6 +5908,7 @@ public static partial class WebDashboard
                                             <option value=""ethereum"">Ethereum</option>
                                             <option value=""arbitrum"">Arbitrum</option>
                                             <option value=""base"">Base</option>
+                                            <option value=""bsc"">BNB Chain</option>
                                         </select>
                                     </div>
                                     <div class=""form-group"" style=""flex: 0 0 280px; margin-bottom: 0;"" title=""How to value OPT received on days when no exchange was open to the public and Osmosis had no trades"">
@@ -5982,7 +6003,7 @@ public static partial class WebDashboard
                                 </div>
 
                                 <div class=""tr-section"" id=""tr-titn"" hidden>
-                                    <h3>1a. Other crypto income: THORWallet (TITN) rewards</h3>
+                                    <h3>1a. Other crypto income: THORWallet (TITN) and NILA staking rewards</h3>
                                     <p class=""tr-lede"" id=""tr-titn-lede""></p>
                                     <div class=""data-table-wrap pnl-table-wrap"">
                                         <table class=""data-table"">
@@ -6151,7 +6172,7 @@ public static partial class WebDashboard
                                 </div>
 
                                 <div class=""tr-section"" id=""tr-tlots"" hidden>
-                                    <h3>4a. TGT, TITN, ETH and USDC: sales and exchanges (for Form 8949)</h3>
+                                    <h3>4a. Other crypto assets (TITN, TGT, NILA, PATRIOT, ETH, BNB, USDC, USDT): sales and exchanges (for Form 8949)</h3>
                                     <p class=""tr-lede"" id=""tr-tlots-lede""></p>
                                     <div class=""tr-no-print"" style=""font-size: 13px; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"">
                                         <label for=""tr-migration""><strong>TGT→TITN migration</strong></label>
@@ -7364,7 +7385,7 @@ public static partial class WebDashboard
                                 // Network shown: OPT sections belong to the selected wallet's network (Optio or Osmosis); the
                                 // Ethereum-side sections are filtered by the network each transaction happened on.
                                 const net = $('tr-network').value;
-                                const evmNet = ['ethereum', 'arbitrum', 'base'].includes(net) ? net : null;
+                                const evmNet = ['ethereum', 'arbitrum', 'base', 'bsc'].includes(net) ? net : null;
                                 const optNetOk = !net || (net === 'optio' && dist.address.startsWith('optio1')) || (net === 'osmosis' && dist.address.startsWith('osmo1'));
                                 const evmOk = !net || !!evmNet;
                                 const pickChain = (ch) => !evmNet || ch === evmNet;
@@ -7461,7 +7482,7 @@ public static partial class WebDashboard
                                 $('tr-titn').hidden = !titnYear.length;
                                 if (titnYear.length) {
                                     const walletName = (w) => window.opticWallets.label(w) || (w.slice(0, 6) + '…' + w.slice(-4));
-                                    const scanUrl = (r) => (r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
+                                    const scanUrl = (r) => (r.chain === 'bsc' ? 'https://bscscan.com/tx/' : r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
                                     const amt = (v, sym) => Number(v).toLocaleString('en-US', { maximumFractionDigits: sym === 'USDC' ? 2 : 0 }) + ' ' + sym;
                                     $('tr-titn-lede').innerHTML = `Rewards from THORWallet's contracts paid into your saved Base and Arbitrum wallets during ${esc(a.year)}. Each payment is ordinary income on the day it was received (Rev. Rul. 2023-14): USDC at $1.00 and TITN at that day's DefiLlama price. The TITN you staked coming back to you is not income and is not listed. TITN received here starts a holding with a cost basis equal to the income reported.`;
                                     const srcs = [...new Set(titnYear.map(r => r.source + '|' + r.symbol))];
@@ -7491,7 +7512,7 @@ public static partial class WebDashboard
                                 if (!$('tr-tlots').hidden) {
                                     $('tr-migration').value = tl.migration || 'exchange';
                                     const wName = (w) => window.opticWallets.label(w) || (w.slice(0, 6) + '…' + w.slice(-4));
-                                    const txUrl = (chain, tx) => (chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + tx;
+                                    const txUrl = (chain, tx) => (chain === 'bsc' ? 'https://bscscan.com/tx/' : chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + tx;
                                     const day = (v) => v ? esc(String(v).slice(0, 10)) : '–';
                                     $('tr-tlots-lede').innerHTML = `Disposals of TGT, TITN and ETH in your saved Ethereum, Arbitrum and Base wallets during ${esc(a.year)}, kept separate from OPT. Each wallet keeps its own lots and the highest-cost lot is used first. Cost is what you paid (stablecoins at $1.00, ETH at the day's price, THORChain and Maya swaps at their recorded USD value). ETH received from an exchange is costed at that day's price until the exchange's records are loaded. Every network fee is ETH spent at its value that day; in a trade of one digital asset for another, half of the fee is added to the cost of what was received and half reduces the proceeds of what was given up (Treas. Reg. §1.1012-1(h)). Fees for staking, bridging and moves between your own wallets are not added to cost. ${tl.migration === 'carryover' ? 'The TGT→TITN migration is treated as not taxable: the TITN you received keeps what you paid for the TGT (and its purchase dates, for the holding period), and the extra TITN for leaving TGT in the contract a full year has no cost of its own.' : 'The TGT→TITN migration is an exchange of TGT at its market value on the day it was deposited; that value is the cost of the TITN the deposit entitled you to, and TITN received beyond that (for leaving TGT in the contract a full year) is additional proceeds of the exchange when received.'} Liquidity in the Aerodrome TITN/USDC pool is settled when the position closed: TITN that came back short was sold for the net USDC gained, extra TITN was bought for the net USDC paid. Staking, bridging between networks and moves between your own wallets are not sales.`;
                                     $('tr-tlots-flags').innerHTML = (tlNoCost.length ? `<div class=""tr-flag"" style=""margin-bottom: 4px;"">${tlNoCost.length} line(s) have no cost or proceeds yet and are left out of the totals.</div>` : '') +
@@ -7951,7 +7972,7 @@ public static partial class WebDashboard
                                 otherAssetsLoading = true;
                                 const note = $('tr-other-assets-status');
                                 note.hidden = false;
-                                note.textContent = 'Reading your Ethereum, Arbitrum and Base wallets for TITN, TGT and ETH. The first time can take several minutes; the OPT figures above are complete.';
+                                note.textContent = 'Reading your Ethereum, Arbitrum, Base and BNB Chain wallets for your other crypto assets. The first time can take several minutes; the OPT figures above are complete.';
                                 const forData = data;
                                 Promise.all([
                                     fetch('/api/titn/summary').then(r => r.ok ? r.json() : null).catch(() => null),
@@ -8112,7 +8133,7 @@ public static partial class WebDashboard
                             <form id=""mw-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px;"">
                                 <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
                                     <label for=""mw-address"">Wallet address</label>
-                                    <input type=""text"" id=""mw-address"" placeholder=""optio1..., osmo1... or 0x... (Ethereum / Base / Arbitrum)"" autocomplete=""off"" spellcheck=""false"" required>
+                                    <input type=""text"" id=""mw-address"" placeholder=""optio1..., osmo1..., gonka1... or 0x... (Ethereum / Base / Arbitrum / BNB Chain)"" autocomplete=""off"" spellcheck=""false"" required>
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 1 220px; margin-bottom: 0;"">
                                     <label for=""mw-label"">Label (optional)</label>
@@ -8150,19 +8171,21 @@ public static partial class WebDashboard
 
                             const render = () => {
                                 const wallets = W.listSaved();
-                                const network = (a) => W.valid(a) ? 'Optio' : W.validOsmo(a) ? 'Osmosis' : 'Ethereum · Base · Arbitrum';
+                                const network = (a) => W.valid(a) ? 'Optio' : W.validOsmo(a) ? 'Osmosis' : W.validGonka(a) ? 'Gonka' : '<span style=""color: var(--text-muted); font-size: 12px;"">Checking Ethereum, Base, Arbitrum and BNB Chain…</span>';
                                 const reports = (a) => W.valid(a)
                                     ? `<a href=""/page/address-distributions?address=${encodeURIComponent(a)}"">Distributions</a> · <a href=""/page/pnl?address=${encodeURIComponent(a)}"">Profit &amp; Loss</a>`
                                     : W.validOsmo(a)
                                         ? `<a href=""https://www.mintscan.io/osmosis/address/${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">Mintscan</a> · used by the Tax Report`
-                                        : [['Etherscan', 'https://etherscan.io/address/'], ['Basescan', 'https://basescan.org/address/'], ['Arbiscan', 'https://arbiscan.io/address/']]
+                                    : W.validGonka(a)
+                                        ? `<a href=""https://gonka.gg/address/${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">Gonka.gg</a> · balances only for now`
+                                        : [['Etherscan', 'https://etherscan.io/address/'], ['Basescan', 'https://basescan.org/address/'], ['Arbiscan', 'https://arbiscan.io/address/'], ['BscScan', 'https://bscscan.com/address/']]
                                             .map(([n, u]) => `<a href=""${u}${encodeURIComponent(a)}"" target=""_blank"" rel=""noopener"">${n}</a>`).join(' · ');
                                 body.innerHTML = wallets.length === 0
                                     ? '<tr><td colspan=""6"" style=""text-align: center; color: var(--text-secondary);"">No wallets saved yet. Add your distribution wallet first; it becomes the primary.</td></tr>'
                                     : wallets.map(w => `<tr>
                                         <td>${W.valid(w.a) ? `<input type=""radio"" name=""mw-primary"" value=""${esc(w.a)}"" ${w.p ? 'checked' : ''} aria-label=""Make ${esc(w.a)} the primary wallet"">` : ''}</td>
-                                        <td style=""white-space: nowrap;"">${network(w.a)}</td>
-                                        <td class=""address-cell"">${esc(w.a)}${W.validEvm(w.a) || W.validOsmo(w.a) ? `<div class=""mw-bal"" data-bal=""${esc(w.a)}"" style=""font-family: inherit; font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: normal;"">Reading balances…</div>` : ''}</td>
+                                        <td ${W.validEvm(w.a) ? `data-net=""${esc(w.a)}"" title=""Checked on Ethereum, Base, Arbitrum and BNB Chain. Shown: the networks where this address holds or stakes something now.""` : 'style=""white-space: nowrap;""'}>${network(w.a)}</td>
+                                        <td class=""address-cell"">${esc(w.a)}${W.validEvm(w.a) || W.validOsmo(w.a) || W.validGonka(w.a) ? `<div class=""mw-bal"" data-bal=""${esc(w.a)}"" style=""font-family: inherit; font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: normal;"">Reading balances…</div>` : ''}</td>
                                         <td><input type=""text"" data-label=""${esc(w.a)}"" value=""${esc(w.l)}"" maxlength=""40"" placeholder=""${w.p ? 'Primary' : 'My wallet'}"" style=""width: 100%; min-width: 140px;""></td>
                                         <td style=""white-space: nowrap;"">${reports(w.a)}</td>
                                         <td><button type=""button"" data-remove=""${esc(w.a)}"" style=""padding: 4px 10px; font-size: 11px;"">Remove</button></td>
@@ -8170,23 +8193,55 @@ public static partial class WebDashboard
                                 loadBalances();
                             };
 
-                            // ETH, USDC (Circle USDC; USDC.e on Arbitrum), TITN and TGT on each network for the 0x... wallets.
-                            let balances = null;
+                            // What each 0x... wallet holds and stakes on each network (ETH, BNB, USDC, USDT, TITN, TGT, NILA, PATRIOT),
+                            // and badges for the networks where it holds or stakes something. Detected, not entered.
+                            window.opticGet = window.opticGet || (() => { const c = {}; return (u) => c[u] || (c[u] = fetch(u).then(r => r.ok ? r.json() : null)); })();
+                            let balances = null, titn = null, stakes = null;
+                            const CHAINS = ['bsc', 'ethereum', 'base', 'arbitrum', 'osmosis', 'gonka'];
                             const fillBalances = () => {
-                                const fmt = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' ? 6 : 2 });
+                                const fmt = (v, s) => Number(v).toLocaleString('en-US', { maximumFractionDigits: s === 'ETH' || s === 'BNB' ? 6 : s === 'TITN' || s === 'TGT' || s === 'PATRIOT' ? 0 : 2 });
+                                const day = (v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
                                 const usd = (v) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', osmosis: 'Osmosis' };
+                                const net = { base: 'Base', ethereum: 'Ethereum', arbitrum: 'Arbitrum', bsc: 'BNB Chain', osmosis: 'Osmosis', gonka: 'Gonka' };
                                 document.querySelectorAll('[data-bal]').forEach(el => {
-                                    const w = balances && balances.wallets.find(x => x.address === el.dataset.bal);
-                                    if (!w) { el.textContent = balances ? 'No balances found.' : el.textContent; return; }
-                                    const parts = w.chains.filter(ch => ch.balances.length).map(ch => `<strong>${net[ch.chain] || ch.chain}:</strong> ${ch.balances.map(b => `${fmt(b.amount, b.symbol)} ${esc(b.symbol)}`).join(', ')}`);
-                                    el.innerHTML = (parts.join(' · ') || 'Empty on Ethereum, Arbitrum and Base') + (w.usd > 0.005 ? ` · <strong>${usd(w.usd)}</strong>` : '') + ' <span style=""color: var(--text-muted);"">(staked TITN is on <a href=""/page/my-titn"">My TITN</a>)</span>';
+                                    const a = el.dataset.bal.toLowerCase(), evm = W.validEvm(a);
+                                    const w = balances && (balances.wallets || []).find(x => x.address.toLowerCase() === a);
+                                    // byChain: what to list per network; real: networks holding a cent or more, or a stake (the rest is dust).
+                                    const byChain = {}, real = new Set();
+                                    const push = (c, s) => (byChain[c] = byChain[c] || []).push(s);
+                                    for (const ch of w ? w.chains : []) for (const b of ch.balances) {
+                                        if (fmt(b.amount, b.symbol) === '0') continue;
+                                        push(ch.chain, `${fmt(b.amount, b.symbol)} ${esc(b.symbol)}`);
+                                        if (!(b.usd < 0.01)) real.add(ch.chain);
+                                    }
+                                    const t = evm && titn && (titn.wallets || []).find(x => x.address.toLowerCase() === a);
+                                    if (t && t.titnStaked > 0.01) { push('base', `${fmt(t.titnStaked, 'TITN')} TITN staked (<a href=""/page/my-titn"">My TITN</a>)`); real.add('base'); }
+                                    const groups = {};
+                                    for (const s of evm ? (stakes || []).filter(s => s.wallet.toLowerCase() === a) : []) {
+                                        const k = s.chain + '|' + s.asset;
+                                        const g = groups[k] = groups[k] || { chain: s.chain, asset: s.asset, amount: 0, n: 0, next: null, ready: 0 };
+                                        g.amount += s.amount; g.n++;
+                                        if (s.unlocked) g.ready++; else if (!g.next || s.unlocks < g.next) g.next = s.unlocks;
+                                    }
+                                    for (const g of Object.values(groups)) real.add(g.chain);
+                                    for (const g of Object.values(groups))
+                                        push(g.chain, `${fmt(g.amount, g.asset)} ${esc(g.asset)} staked (${g.n} stake${g.n === 1 ? '' : 's'}${g.ready ? `, ${g.ready} unlocked` : ''}${g.next ? `, next unlock ${day(g.next)}` : ''})`);
+                                    const found = Object.keys(byChain).sort((x, y) => (CHAINS.indexOf(x) + 1 || 99) - (CHAINS.indexOf(y) + 1 || 99));
+                                    const waiting = !balances || (evm && (!titn || !stakes));
+                                    if (!found.length) el.textContent = waiting ? 'Reading balances…' : evm ? 'Nothing held or staked on Ethereum, Base, Arbitrum or BNB Chain.' : 'No balances found.';
+                                    else el.innerHTML = found.map(c => `<strong>${net[c] || esc(c)}:</strong> ${byChain[c].join(', ')}`).join(' · ') + (w && w.usd > 0.005 ? ` · <strong>${usd(w.usd)}</strong> in the wallet` : '') + (waiting ? ' <span style=""color: var(--text-muted);"">(still reading stakes…)</span>' : '');
+                                    const cell = document.querySelector(`[data-net=""${CSS.escape(el.dataset.bal)}""]`);
+                                    if (cell && (found.length || !waiting))
+                                        cell.innerHTML = found.length ? found.map(c => real.has(c) ? `<span style=""display: inline-block; padding: 1px 8px; margin: 1px 4px 1px 0; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-light); font-size: 12px;"">${net[c] || esc(c)}</span>` : `<span title=""Only dust (under $0.01)"" style=""color: var(--text-muted); font-size: 12px; margin-right: 6px;"">${net[c] || esc(c)}</span>`).join('') : '<span style=""color: var(--text-muted); font-size: 12px;"">Nothing held yet</span>';
                                 });
                             };
                             const loadBalances = () => {
                                 if (!document.querySelector('[data-bal]')) return;
                                 if (balances) { fillBalances(); return; }
-                                fetch('/api/evm/balances').then(r => r.ok ? r.json() : null).then(j => { balances = j; fillBalances(); }).catch(() => { });
+                                window.opticGet('/api/evm/balances').then(j => { balances = j || { wallets: [] }; fillBalances(); }).catch(() => { balances = { wallets: [] }; fillBalances(); });
+                                if (!W.listSaved().some(w => W.validEvm(w.a))) { titn = stakes = []; return; }
+                                window.opticGet('/api/titn/summary').then(j => { titn = j || { wallets: [] }; fillBalances(); }).catch(() => { titn = { wallets: [] }; fillBalances(); });
+                                window.opticGet('/api/stakes').then(j => { stakes = (j && j.stakes) || []; fillBalances(); }).catch(() => { stakes = []; fillBalances(); });
                             };
 
                             document.getElementById('mw-form').addEventListener('submit', (e) => {
@@ -8194,7 +8249,7 @@ public static partial class WebDashboard
                                 const addressEl = document.getElementById('mw-address');
                                 const labelEl = document.getElementById('mw-label');
                                 const address = addressEl.value.trim().toLowerCase();
-                                if (!W.validSaved(address)) { status.textContent = 'That is not a valid optio1..., osmo1... or 0x... address.'; return; }
+                                if (!W.validSaved(address)) { status.textContent = 'That is not a valid optio1..., osmo1..., gonka1... or 0x... address.'; return; }
                                 if (W.isMine(address)) { status.textContent = 'That wallet is already saved.'; return; }
                                 W.add(address, labelEl.value);
                                 addressEl.value = '';
@@ -8238,8 +8293,8 @@ public static partial class WebDashboard
                         <div class=""card-content"">
                             <form id=""addr-dist-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px;"">
                                 <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
-                                    <label for=""addr-dist-input"">Wallet address</label>
-                                    <input type=""text"" id=""addr-dist-input"" placeholder=""optio1... (or 0x... for TITN / TGT rewards)"" autocomplete=""off"" spellcheck=""false"" required>
+                                    <label for=""addr-dist-input"">Wallet address (leave blank for all your wallets)</label>
+                                    <input type=""text"" id=""addr-dist-input"" placeholder=""All my Optio wallets, or paste any optio1... / 0x... address"" autocomplete=""off"" spellcheck=""false"">
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 0 140px; margin-bottom: 0;"">
                                     <label for=""addr-dist-year"">Year</label>
@@ -8260,6 +8315,7 @@ public static partial class WebDashboard
                                         <option value=""OPT"">OPT</option>
                                         <option value=""TITN"">TITN</option>
                                         <option value=""TGT"">TGT</option>
+                                        <option value=""NILA"">NILA</option>
                                     </select>
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 0 160px; margin-bottom: 0;"">
@@ -8270,6 +8326,7 @@ public static partial class WebDashboard
                                         <option value=""base"">Base</option>
                                         <option value=""arbitrum"">Arbitrum</option>
                                         <option value=""ethereum"">Ethereum</option>
+                                        <option value=""bsc"">BNB Chain</option>
                                     </select>
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 0 260px; margin-bottom: 0;"" title=""How to price payouts on days when no exchange was open to the public and Osmosis had no trades"">
@@ -8288,7 +8345,6 @@ public static partial class WebDashboard
                                 <button type=""submit"" id=""addr-dist-submit"">Get Distributions</button>
                                 <a id=""addr-dist-csv"" class=""header-link"" href=""#"" hidden>Download CSV</a>
                             </form>
-                            <div id=""addr-dist-wallets"" style=""font-size: 13px; color: var(--text-secondary); margin: -4px 0 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;""></div>
                             <div id=""addr-dist-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;"">Lists every payout from the node distribution account (optio103r5...) to the wallet, priced at the OPT/USD rate for the hour it was paid.</div>
                             <div id=""addr-dist-summary"" style=""display: none; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 12px;""></div>
                             <div id=""addr-dist-view"" role=""group"" aria-label=""View"" style=""display: none; gap: 6px; margin-bottom: 8px;"">
@@ -8466,7 +8522,7 @@ public static partial class WebDashboard
 
                             const updateUrl = () => {
                                 const params = new URLSearchParams();
-                                if (loaded) params.set('address', loaded.address);
+                                if (loaded && loaded.address) params.set('address', loaded.address);
                                 if (yearSelect.value) params.set('year', yearSelect.value);
                                 if (typeSelect.value) params.set('type', typeSelect.value);
                                 if (discountInput.value) params.set('discount', discountInput.value);
@@ -8547,7 +8603,7 @@ public static partial class WebDashboard
                             const networkSel = document.getElementById('addr-dist-network');
                             const showOpt = () => (!assetSel.value || assetSel.value === 'OPT') && (!networkSel.value || networkSel.value === 'optio');
                             const showOther = () => assetSel.value !== 'OPT' && networkSel.value !== 'optio';
-                            let otherRewards = null, otherLoading = false, pendingWallet = null, otherWallets = [], otherPrice = null;
+                            let otherRewards = null, otherLoading = false, pendingWallet = null, otherWallets = [], otherPrice = null, otherStakes = [];
                             const renderOther = () => {
                                 const box = document.getElementById('addr-dist-other');
                                 box.hidden = !showOther();
@@ -8558,6 +8614,7 @@ public static partial class WebDashboard
                                     st.textContent = 'Reading your Ethereum, Arbitrum and Base wallets…';
                                     if (!otherLoading) {
                                         otherLoading = true;
+                                        fetch('/api/stakes').then(r => r.ok ? r.json() : null).then(j => { otherStakes = (j && j.stakes) || []; if (otherRewards) renderOther(); }).catch(() => { });
                                         fetch('/api/titn/summary').then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(j => { otherRewards = j.rewards || []; otherWallets = j.wallets || []; otherPrice = (j.price && j.price.usd) || null; otherLoading = false; renderOther(); })
                                             .catch(e => { otherLoading = false; st.textContent = 'Could not read your other wallets: ' + e.message; });
                                     }
@@ -8574,7 +8631,7 @@ public static partial class WebDashboard
                                 const rows = otherRewards.filter(r => (!year || String(r.time).startsWith(year)) && (!from || r.earnedFrom === from) && (!net || r.chain === net) && (!wallet || r.wallet === wallet)
                                     && (!type || (type === 'staking' ? r.kind === 'staking' : false)));
                                 const usd = (v) => '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                                const netName = { base: 'Base', arbitrum: 'Arbitrum', ethereum: 'Ethereum' };
+                                const netName = { base: 'Base', arbitrum: 'Arbitrum', ethereum: 'Ethereum', bsc: 'BNB Chain' };
                                 const wName = (w) => window.opticWallets.label(w) || (w.slice(0, 6) + '…' + w.slice(-4));
                                 const byPaid = {};
                                 for (const r of rows) { const k = r.symbol; byPaid[k] = byPaid[k] || { amt: 0, usd: 0, n: 0 }; byPaid[k].amt += r.amount; byPaid[k].usd += r.usd || 0; byPaid[k].n++; }
@@ -8583,11 +8640,18 @@ public static partial class WebDashboard
                                 const heldW = otherWallets.filter(w => !wallet || w.address === wallet);
                                 const heldBal = heldW.reduce((s, w) => s + (w.titnBalance || 0), 0), heldStaked = heldW.reduce((s, w) => s + (w.titnStaked || 0), 0);
                                 const heldTile = (!from || from === 'TITN') && heldW.length ? tile('TITN held now', Number(heldBal + heldStaked).toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' TITN', `${Number(heldStaked).toLocaleString('en-US', { maximumFractionDigits: 0 })} staked · ${Number(heldBal).toLocaleString('en-US', { maximumFractionDigits: 0 })} in wallet${otherPrice ? ' · ' + usd((heldBal + heldStaked) * otherPrice) : ''}`) : '';
-                                document.getElementById('addr-dist-other-tiles').innerHTML = heldTile + tile('Income (USD)', usd(rows.reduce((s, r) => s + (r.usd || 0), 0)), `${rows.length} payments`) +
+                                // NILA earned while staked: builds up in the staking contract until you claim it (income when claimed).
+                                const stakesShown = otherStakes.filter(s => (!from || from === s.asset) && (!net || net === s.chain) && (!wallet || s.wallet === wallet));
+                                const nilaEarned = stakesShown.reduce((t, s) => t + (s.earnedSoFar || 0), 0), nilaUnclaimed = stakesShown.reduce((t, s) => t + (s.unclaimedReward || 0), 0);
+                                const nilaAtUnlock = stakesShown.reduce((t, s) => t + (s.rewardAtUnlock || 0), 0), nilaStaked = stakesShown.reduce((t, s) => t + (s.amount || 0), 0);
+                                const nilaUsd = stakesShown.reduce((t, s) => t + (s.earnedUsdNow || 0), 0);
+                                const stakeTile = stakesShown.length ? tile('NILA earned while staked', Number(nilaEarned).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' NILA',
+                                    `${usd(nilaUsd)} today · ${Number(nilaUnclaimed).toLocaleString('en-US', { maximumFractionDigits: 2 })} not claimed yet · ${Number(nilaAtUnlock).toLocaleString('en-US', { maximumFractionDigits: 2 })} by the unlock dates on ${Number(nilaStaked).toLocaleString('en-US', { maximumFractionDigits: 2 })} staked`) : '';
+                                document.getElementById('addr-dist-other-tiles').innerHTML = heldTile + stakeTile + tile('Income (USD)', usd(rows.reduce((s, r) => s + (r.usd || 0), 0)), `${rows.length} payments`) +
                                     Object.entries(byPaid).map(([k, v]) => tile(`Paid in ${k}`, Number(v.amt).toLocaleString('en-US', { maximumFractionDigits: k === 'USDC' ? 2 : 0 }) + ' ' + k, `${v.n} payments · ${usd(v.usd)}`)).join('') +
                                     (wallet ? '' : [...new Set(rows.map(r => r.wallet))].map(w => { const xs = rows.filter(r => r.wallet === w); return tile(wName(w), usd(xs.reduce((s, r) => s + (r.usd || 0), 0)), `${xs.length} payments`); }).join(''));
-                                st.textContent = `Rewards earned by ${from || 'TITN and TGT'} in ${wallet ? wName(wallet) : 'all your saved Ethereum, Arbitrum and Base wallets'}${net ? ' on ' + netName[net] : ''}${year ? ' during ' + year : ''}. TITN and TGT staking pay in USDC (valued at $1.00); the TITN airdrop paid in TITN (valued at that day\x27s price). Each is income when received.` + (type === 'node' ? ' None of these are node rewards.' : '');
-                                const scan = (r) => (r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : r.chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
+                                st.textContent = `Rewards earned by ${from || 'TITN, TGT and NILA'} in ${wallet ? wName(wallet) : 'all your saved Ethereum, Arbitrum, Base and BNB Chain wallets'}${net ? ' on ' + netName[net] : ''}${year ? ' during ' + year : ''}. TITN and TGT staking pay in USDC (valued at $1.00); the TITN airdrop paid in TITN (valued at that day\x27s price). Each is income when received.${stakesShown.length ? ' NILA staking rewards build up in the staking contract; the payments table lists them once claimed.' : ''}` + (type === 'node' ? ' None of these are node rewards.' : '');
+                                const scan = (r) => (r.chain === 'bsc' ? 'https://bscscan.com/tx/' : r.chain === 'arbitrum' ? 'https://arbiscan.io/tx/' : r.chain === 'ethereum' ? 'https://etherscan.io/tx/' : 'https://basescan.org/tx/') + r.tx;
                                 document.getElementById('addr-dist-other-body').innerHTML = rows.slice().reverse().map(r => `<tr><td>${String(r.time).slice(0, 16).replace('T', ' ')}</td><td>${netName[r.chain] || r.chain}</td><td>${wName(r.wallet)}</td><td>${r.earnedFrom}</td><td>${r.source}</td><td style=""text-align: right; white-space: nowrap;"">${Number(r.amount).toLocaleString('en-US', { maximumFractionDigits: r.symbol === 'USDC' ? 6 : 2 })} ${r.symbol}</td><td style=""text-align: right;"">${r.usd == null ? '–' : usd(r.usd)}</td><td style=""font-family: monospace; font-size: 11px;""><a href=""${scan(r)}"" target=""_blank"" rel=""noopener"">${r.tx.slice(0, 10)}…</a></td></tr>`).join('')
                                     || '<tr><td colspan=""8"" style=""text-align: center; color: var(--text-secondary);"">No rewards for this filter.</td></tr>';
                                 document.getElementById('addr-dist-other-foot').innerHTML = rows.length ? `<tr class=""tr-total""><td colspan=""6""><strong>Total</strong></td><td style=""text-align: right;""><strong>${usd(rows.reduce((s, r) => s + (r.usd || 0), 0))}</strong></td><td></td></tr>` : '';
@@ -8662,7 +8726,7 @@ public static partial class WebDashboard
                                         const excessOpt = sumOf(x => x.excess);
                                         return tile('Value at accessible price', `${fmtUsd(sumOf(x => x.plain))}<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;"">quoted ${fmtUsd(totalValueUsd)}${unpricedCount > 0 ? ` (${unpricedCount.toLocaleString('en-US')} payouts have no quoted price)` : ''}</div>`) +
                                             tile('Liquidity-adjusted value', `${fmtUsd(sumOf(x => x.adjusted))}<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;"">${(discount() * 100).toLocaleString('en-US')}% off ${fmtOpt(excessOpt)} OPT above market capacity</div>`) +
-                                            tile('Days above what the market could absorb', `${over.toLocaleString('en-US')} of ${payoutDays.length.toLocaleString('en-US')}<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;""><a href=""/page/liquidity-evidence?address=${encodeURIComponent(loaded.address)}${year ? '&year=' + year : ''}"">See the liquidity evidence</a></div>`);
+                                            tile('Days above what the market could absorb', `${over.toLocaleString('en-US')} of ${payoutDays.length.toLocaleString('en-US')}<div style=""font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 2px;""><a href=""/page/liquidity-evidence${loaded.address ? '?address=' + encodeURIComponent(loaded.address) + (year ? '&year=' + year : '') : year ? '?year=' + year : ''}"">See the liquidity evidence</a></div>`);
                                     })();
                                 summary.style.display = 'grid';
 
@@ -8677,7 +8741,7 @@ public static partial class WebDashboard
                                         <tr>
                                             <td>${fmtTime(r.timeUtc)}</td>
                                             <td>${Number(r.height).toLocaleString('en-US')}</td>
-                                            <td>${kindCell(r)}</td>
+                                            <td>${kindCell(r)}${r.wallet ? `<div style=""font-size: 11px; color: var(--text-muted);"">${esc(r.wallet)}</div>` : ''}</td>
                                             <td class=""amount-cell"">${fmtOpt(r.amountOpt)}</td>
                                             <td class=""amount-cell"" title=""${r.priceInterval === '1d' ? 'Daily close (no hourly price for this time)' : r.priceInterval === '1h' ? 'Hourly close' : 'No market price available'}"">${fmtPrice(r.priceUsd)}${r.priceInterval === '1d' ? '*' : ''}</td>
                                             <td class=""amount-cell"">${fmtUsd(r.valueUsd)}</td>
@@ -8703,19 +8767,18 @@ public static partial class WebDashboard
                                 csvLink.hidden = false;
                             };
 
+                            // address = one wallet; blank = every saved Optio wallet, payouts merged by time and tagged with the wallet.
                             const run = async (address) => {
                                 const done = window.opticBusy(submit, status, 'Searching the node');
                                 csvLink.hidden = true;
                                 summary.style.display = 'none';
                                 tableWrap.hidden = true;
-                                status.textContent = 'Searching the node for distributions to this address. Wallets with a long history can take a minute...';
+                                const n = window.opticWallets.list().length;
+                                status.textContent = `Searching the node for distributions to ${address ? 'this address' : n > 1 ? 'your ' + n + ' Optio wallets' : 'your wallet'}. Wallets with a long history can take a minute...`;
                                 try {
-                                    const response = await fetch('/api/distributions/address?address=' + encodeURIComponent(address));
-                                    const data = await response.json();
-                                    if (!response.ok) throw new Error(data.error || 'Request failed');
-                                    loaded = { address: data.address, data };
+                                    // loaded.address is what was asked for ('' = all your wallets), so filter changes re-render in place.
+                                    loaded = { address, data: await window.opticWallets.distributions(address) };
                                     renderView();
-                                    renderWallets();
                                     loadAbsorb();
                                 } catch (error) {
                                     loaded = null;
@@ -8739,7 +8802,7 @@ public static partial class WebDashboard
                                     document.getElementById('addr-dist-other').scrollIntoView({ behavior: 'smooth' });
                                     return;
                                 }
-                                if (address) run(address);
+                                run(address.toLowerCase());
                             });
 
                             viewEl.addEventListener('click', (e) => {
@@ -8754,20 +8817,20 @@ public static partial class WebDashboard
                                 if (!loaded) return;
                                 // Payout view with market data loaded: build the CSV here so it includes the adjusted values.
                                 if (viewMode !== 'price') {
-                                    if (!absorbBy) return;
+                                    if (!absorbBy && loaded.address) return;
                                     e.preventDefault();
                                     const cell = (v) => { const s = v == null ? '' : String(v); return /[,\x22\n]/.test(s) ? '\x22' + s.replace(/\x22/g, '\x22\x22') + '\x22' : s; };
                                     const year = yearSelect.value, type = typeSelect.value;
                                     const rows = (loaded.data.rows || []).filter(r => (!year || String(r.timeUtc).startsWith(year)) && (!type || r.kind === type));
-                                    const lines = [['time_utc', 'height', 'tx_hash', 'type', 'type_inferred', 'amount_opt', 'quoted_price_usd', 'quoted_value_usd', 'quoted_price_interval', 'accessible_price_usd', 'accessible_price_source', 'day_received_opt', 'day_market_capacity_opt', 'opt_above_capacity', 'discount_pct', 'accessible_value_usd', 'adjusted_value_usd', 'memo'].join(',')];
+                                    const lines = [['time_utc', 'height', 'tx_hash', 'type', 'type_inferred', 'amount_opt', 'quoted_price_usd', 'quoted_value_usd', 'quoted_price_interval', 'accessible_price_usd', 'accessible_price_source', 'day_received_opt', 'day_market_capacity_opt', 'opt_above_capacity', 'discount_pct', 'accessible_value_usd', 'adjusted_value_usd', 'memo', 'wallet'].join(',')];
                                     for (const r of rows) {
                                         const x = adjust(r);
                                         lines.push([fmtTime(r.timeUtc), r.height, r.txHash, r.kind === 'staking' ? 'staking/participation' : 'node', r.kindInferred ? 'yes' : 'no', r.amountOpt, r.priceUsd, r.valueUsd, r.priceInterval,
-                                            x?.price, x?.source, x?.dayTotal, x?.cap, x?.excess, discount() * 100, x?.plain, x?.adjusted, r.memo].map(cell).join(','));
+                                            x?.price, x?.source, x?.dayTotal, x?.cap, x?.excess, discount() * 100, x?.plain, x?.adjusted, r.memo, r.walletAddress || loaded.address].map(cell).join(','));
                                     }
                                     const a = document.createElement('a');
                                     a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
-                                    a.download = `distributions-${loaded.address}${year ? '-' + year : ''}${type ? '-' + type : ''}.csv`;
+                                    a.download = `distributions-${loaded.address || 'all-wallets'}${year ? '-' + year : ''}${type ? '-' + type : ''}.csv`;
                                     a.click();
                                     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
                                     return;
@@ -8779,35 +8842,30 @@ public static partial class WebDashboard
                                     lines.push([b.label.replace(/\$/g, '').replace(' - ', ' to '), b.count, b.opt, b.value, b.avg, fmtTime(b.first), fmtTime(b.last)].map(cell).join(','));
                                 const a = document.createElement('a');
                                 a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
-                                a.download = `distributions-by-price-${loaded.address}${yearSelect.value ? '-' + yearSelect.value : ''}${typeSelect.value ? '-' + typeSelect.value : ''}.csv`;
+                                a.download = `distributions-by-price-${loaded.address || 'all-wallets'}${yearSelect.value ? '-' + yearSelect.value : ''}${typeSelect.value ? '-' + typeSelect.value : ''}.csv`;
                                 a.click();
                                 setTimeout(() => URL.revokeObjectURL(a.href), 1000);
                             });
 
                             // Switching years re-filters the rows already loaded; no new node query.
                             yearSelect.addEventListener('change', () => {
-                                if (loaded && loaded.address === input.value.trim()) renderView();
+                                if (loaded && loaded.address === input.value.trim().toLowerCase()) renderView();
                                 else updateUrl();
                             });
                             typeSelect.addEventListener('change', () => {
-                                if (loaded && loaded.address === input.value.trim()) renderView();
+                                if (loaded && loaded.address === input.value.trim().toLowerCase()) renderView();
                                 else updateUrl();
                             });
                             closedRuleSelect.addEventListener('change', () => {
                                 computeAccessible();
-                                if (loaded && loaded.address === input.value.trim()) renderView();
+                                if (loaded && loaded.address === input.value.trim().toLowerCase()) renderView();
                                 else updateUrl();
                             });
                             discountInput.addEventListener('input', () => {
-                                if (loaded && loaded.address === input.value.trim()) renderView();
+                                if (loaded && loaded.address === input.value.trim().toLowerCase()) renderView();
                                 else updateUrl();
                             });
 
-                            const renderWallets = () => window.opticWallets.renderSwitcher(
-                                document.getElementById('addr-dist-wallets'),
-                                loaded ? loaded.address : null,
-                                (address) => { input.value = address; run(address); });
-                            renderWallets();
 
                             const initialParams = new URLSearchParams(location.search);
                             const initialYear = initialParams.get('year');
@@ -8816,12 +8874,10 @@ public static partial class WebDashboard
                             if (initialType === 'node' || initialType === 'staking') typeSelect.value = initialType;
                             if (initialParams.get('discount')) discountInput.value = initialParams.get('discount');
                             if (['dlom', 'last', 'quoted'].includes(initialParams.get('closed'))) closedRuleSelect.value = initialParams.get('closed');
-                            // No address in the link: open the primary wallet.
-                            const initial = initialParams.get('address') || window.opticWallets.primary();
-                            if (initial) {
-                                input.value = initial;
-                                run(initial);
-                            }
+                            // No address in the link: all saved Optio wallets together.
+                            const initial = (initialParams.get('address') || '').trim().toLowerCase();
+                            input.value = initial;
+                            run(initial);
                         })();
                     </script>
 ");
@@ -8836,8 +8892,8 @@ public static partial class WebDashboard
                         <div class=""card-content"">
                             <form id=""pnl-form"" style=""display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px;"">
                                 <div class=""form-group"" style=""flex: 1 1 420px; margin-bottom: 0;"">
-                                    <label for=""pnl-input"">Wallet address</label>
-                                    <input type=""text"" id=""pnl-input"" placeholder=""optio1..."" autocomplete=""off"" spellcheck=""false"" required>
+                                    <label for=""pnl-input"">Wallet address (leave blank for all your wallets)</label>
+                                    <input type=""text"" id=""pnl-input"" placeholder=""All my Optio wallets, or paste an optio1... address"" autocomplete=""off"" spellcheck=""false"">
                                 </div>
                                 <div class=""form-group"" style=""flex: 0 0 140px; margin-bottom: 0;"">
                                     <label for=""pnl-year"">Year</label>
@@ -8848,7 +8904,6 @@ public static partial class WebDashboard
                                     <input type=""checkbox"" id=""pnl-include-dist""> Count node distributions as acquired tokens
                                 </label>
                             </form>
-                            <div id=""pnl-wallets"" style=""font-size: 13px; color: var(--text-secondary); margin: -4px 0 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;""></div>
                             <div id=""pnl-status"" style=""color: var(--text-secondary); font-size: 13px; margin-bottom: 8px;"">Shows what the wallet received outside node distributions, what it sent out, and the profit or loss on each send, matching sends to the oldest tokens first (FIFO).</div>
                             <div id=""pnl-summary"" style=""display: none; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin-bottom: 16px;""></div>
 
@@ -9037,10 +9092,6 @@ public static partial class WebDashboard
                                 excluded = new Set(window.opticWallets.list().map(w => w.a).filter(a => !loaded || a !== loaded.address));
                             };
                             const ownLabel = (a) => window.opticWallets.label(a) || 'My wallet';
-                            const renderWallets = () => window.opticWallets.renderSwitcher(
-                                $('pnl-wallets'),
-                                loaded ? loaded.address : null,
-                                (address) => { input.value = address; run(address); });
 
                             // Walks the ledger oldest first. Receipts that are income or purchases become lots
                             // (cost = market price when received); sends to wallets are sales matched to the oldest lots.
@@ -9237,7 +9288,7 @@ public static partial class WebDashboard
                                         const own = e.category === 'wallet' && excluded.has(e.counterparty);
                                         const repaid = fullyRepaid(e);
                                         return `<tr style=""${own || repaid ? 'background: var(--surface-light);' : ''}${repaid ? ' color: var(--text-secondary);' : ''}"">
-                                            <td>${fmtTime(e.timeUtc)}</td>
+                                            <td>${fmtTime(e.timeUtc)}${e.wallet ? `<div style=""font-size: 11px; color: var(--text-muted);"">${esc(e.wallet)}</div>` : ''}</td>
                                             <td>${e.direction === 'in' ? 'Received' : 'Sent'}</td>
                                             <td class=""address-cell"" title=""${esc(e.counterparty)}"">${esc(short(e.counterparty))}</td>
                                             <td>${own ? `<strong>My wallet</strong> · ${esc(ownLabel(e.counterparty))}` : transferType(e)}</td>
@@ -9288,7 +9339,7 @@ public static partial class WebDashboard
 
                             const updateUrl = () => {
                                 const params = new URLSearchParams();
-                                if (loaded) params.set('address', loaded.address);
+                                if (loaded && loaded.address) params.set('address', loaded.address);
                                 if (yearSelect.value) params.set('year', yearSelect.value);
                                 const qs = params.toString();
                                 history.replaceState(null, '', qs ? '?' + qs : location.pathname);
@@ -9304,7 +9355,7 @@ public static partial class WebDashboard
                                 renderCounterparties();
                                 renderNotes();
                                 results.hidden = false;
-                                status.textContent = `${loaded.data.entries.length.toLocaleString('en-US')} transfers found for ${loaded.address}.`;
+                                status.textContent = `${loaded.data.entries.length.toLocaleString('en-US')} transfers found for ${loaded.address || (loaded.data.wallets.length > 1 ? 'your ' + loaded.data.wallets.length + ' Optio wallets (' + loaded.data.wallets.map(ownLabel).join(', ') + '), counted as one pool' : 'your wallet')}.`;
                             };
 
                             const downloadCsv = (filename, header, rows) => {
@@ -9316,7 +9367,7 @@ public static partial class WebDashboard
                                 a.click();
                                 setTimeout(() => URL.revokeObjectURL(a.href), 1000);
                             };
-                            const suffix = () => loaded.address + (yearSelect.value ? '-' + yearSelect.value : '');
+                            const suffix = () => (loaded.address || 'all-wallets') + (yearSelect.value ? '-' + yearSelect.value : '');
 
                             $('pnl-sales-csv').addEventListener('click', (e) => {
                                 e.preventDefault();
@@ -9357,7 +9408,6 @@ public static partial class WebDashboard
                                 if (!box) return;
                                 if (box.checked) window.opticWallets.add(box.dataset.own); else window.opticWallets.remove(box.dataset.own);
                                 refreshExcluded();
-                                renderWallets();
                                 renderAll(true);
                             });
 
@@ -9374,16 +9424,27 @@ public static partial class WebDashboard
                                 const done = window.opticBusy(submit, status, 'Reading wallet history');
                                 results.hidden = true;
                                 summary.style.display = 'none';
-                                status.textContent = 'Reading the wallet\x27s full transfer history from the node. Wallets with a long history can take a minute...';
+                                const mine = address ? [address] : window.opticWallets.list().map(w => w.a);
+                                status.textContent = `Reading ${mine.length > 1 ? 'the full transfer history of your ' + mine.length + ' wallets' : 'the wallet\x27s full transfer history'} from the node. Wallets with a long history can take a minute...`;
                                 try {
-                                    const response = await fetch('/api/wallet/ledger?address=' + encodeURIComponent(address));
-                                    const data = await response.json();
-                                    if (!response.ok) throw new Error(data.error || 'Request failed');
-                                    loaded = { address: data.address, data };
+                                    if (!mine.length) throw new Error('Save your Optio wallets on My Wallets, or enter an address.');
+                                    // Blank: every saved Optio wallet, entries merged by time and tagged with their wallet. Moves
+                                    // between them are left out (they are all your own wallets), so the FIFO runs on one pool.
+                                    const all = await Promise.all(mine.map(async a => {
+                                        const response = await fetch('/api/wallet/ledger?address=' + encodeURIComponent(a));
+                                        const d = await response.json();
+                                        if (!response.ok) throw new Error((mine.length > 1 ? ownLabel(a) + ': ' : '') + (d.error || 'Request failed'));
+                                        return d;
+                                    }));
+                                    const data = mine.length === 1 ? { ...all[0], wallets: mine } : {
+                                        ...all[0], wallets: mine, truncated: all.some(d => d.truncated),
+                                        entries: all.flatMap((d, i) => d.entries.map(e => ({ ...e, wallet: ownLabel(mine[i]) })))
+                                            .sort((x, y) => (Date.parse(x.timeUtc) - Date.parse(y.timeUtc)) || (x.height - y.height)),
+                                    };
+                                    loaded = { address, data };
                                     refreshExcluded();
                                     expanded.clear();
                                     renderAll(true);
-                                    renderWallets();
                                 } catch (error) {
                                     loaded = null;
                                     view = null;
@@ -9395,31 +9456,18 @@ public static partial class WebDashboard
 
                             form.addEventListener('submit', (e) => {
                                 e.preventDefault();
-                                const address = input.value.trim();
-                                // A 0x... address: show that wallet's rewards from TITN and TGT instead of OPT payouts.
-                                if (/^0x[0-9a-fA-F]{40}$/.test(address)) {
-                                    pendingWallet = address.toLowerCase();
-                                    if (assetSel.value === 'OPT') assetSel.value = '';
-                                    if (networkSel.value === 'optio') networkSel.value = '';
-                                    const ws = document.getElementById('addr-dist-other-wallet');
-                                    if ([...ws.options].some(o => o.value === pendingWallet)) { ws.value = pendingWallet; pendingWallet = null; }
-                                    renderOther();
-                                    document.getElementById('addr-dist-other').scrollIntoView({ behavior: 'smooth' });
-                                    return;
-                                }
-                                if (address) run(address);
+                                const address = input.value.trim().toLowerCase();
+                                if (address && !window.opticWallets.valid(address)) { status.textContent = 'Enter an optio1... address, or leave it blank for all your wallets.'; return; }
+                                run(address);
                             });
 
-                            renderWallets();
                             const params = new URLSearchParams(location.search);
                             const y = params.get('year');
                             if (y && [...yearSelect.options].some(o => o.value === y)) yearSelect.value = y;
-                            // No address in the link: open the primary wallet.
-                            const initial = params.get('address') || window.opticWallets.primary();
-                            if (initial) {
-                                input.value = initial;
-                                run(initial);
-                            }
+                            // No address in the link: all saved Optio wallets together.
+                            const initial = (params.get('address') || '').trim().toLowerCase();
+                            input.value = initial;
+                            run(initial);
                         })();
                     </script>
 ");

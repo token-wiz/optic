@@ -17,11 +17,14 @@ public static partial class WebDashboard
                             <option value="TITN">TITN</option>
                             <option value="TGT">TGT</option>
                             <option value="ETH">ETH</option>
+                            <option value="NILA">NILA</option>
+                            <option value="PATRIOT">PATRIOT</option>
+                            <option value="BNB">BNB</option>
                         </select>
                     </div>
                     <div class="form-group op-other" style="flex: 0 0 260px; margin-bottom: 0;" hidden>
                         <label for="op-wallet">Wallet</label>
-                        <select id="op-wallet"><option value="">All my Ethereum, Arbitrum and Base wallets</option></select>
+                        <select id="op-wallet"><option value="">All my Ethereum, Arbitrum, Base and BNB Chain wallets</option></select>
                     </div>
                     <div class="form-group op-other" style="flex: 0 0 200px; margin-bottom: 0;" hidden>
                         <label for="op-target">Target loss (USD)</label>
@@ -48,7 +51,9 @@ public static partial class WebDashboard
                 const $ = (id) => document.getElementById(id);
                 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => '&#' + ch.charCodeAt(0) + ';');
                 const usd = (v) => (v < 0 ? '($' : '$') + Math.abs(Number(v || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (v < 0 ? ')' : '');
-                const qtyFmt = (v, a) => Number(v).toLocaleString('en-US', { maximumFractionDigits: a === 'ETH' ? 6 : 2 });
+                const qtyFmt = (v, a) => Number(v).toLocaleString('en-US', { maximumFractionDigits: a === 'ETH' || a === 'BNB' ? 6 : a === 'PATRIOT' ? 0 : 2 });
+                // Unit prices: cents for ETH and BNB, enough digits for tokens worth a fraction of a cent.
+                const pxFmt = (v, a) => a === 'ETH' || a === 'BNB' ? Number(v).toFixed(2) : Number(v) < 0.001 ? Number(v).toPrecision(3) : Number(v).toFixed(5);
                 let W = window.opticWallets; // set by the wallet script further down the page
                 let lotsData = null, balances = null, loading = false;
                 // The OPT planner on this page (the tax-report card in planner mode).
@@ -58,7 +63,7 @@ public static partial class WebDashboard
                 const load = () => {
                     if (lotsData || loading) return;
                     loading = true;
-                    $('op-status').textContent = 'Reading your Ethereum, Arbitrum and Base wallets… The first time can take several minutes.';
+                    $('op-status').textContent = 'Reading your Ethereum, Arbitrum, Base and BNB Chain wallets… The first time can take several minutes.';
                     Promise.all([
                         fetch('/api/titn/lots').then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))),
                         fetch('/api/evm/balances').then(r => r.ok ? r.json() : null).catch(() => null),
@@ -75,7 +80,7 @@ public static partial class WebDashboard
                     document.querySelectorAll('#op-card .op-other').forEach(el => el.hidden = !other);
                     const oc = optCard(); if (oc) oc.hidden = other;
                     if (!other) return;
-                    if (!W.listSaved().some(w => W.validEvm(w.a))) { $('op-status').innerHTML = 'Add your Ethereum, Arbitrum or Base wallets on <a href="/page/my-wallets">My Wallets</a> to plan TITN, TGT or ETH sales.'; return; }
+                    if (!W.listSaved().some(w => W.validEvm(w.a))) { $('op-status').innerHTML = 'Add your Ethereum, Arbitrum or Base wallets on <a href="/page/my-wallets">My Wallets</a> to plan TITN, TGT, NILA, PATRIOT, ETH or BNB sales.'; return; }
                     if (!lotsData) { load(); return; }
                     // Wallet choices.
                     const wsel = $('op-wallet');
@@ -83,7 +88,7 @@ public static partial class WebDashboard
                     const wallet = wsel.value;
                     const marketPx = lotsData.price ? lotsData.price[asset] : null;
                     const px = Number($('op-price').value) > 0 ? Number($('op-price').value) : marketPx;
-                    const lots = (lotsData.holdings || []).filter(h => h.asset === asset && (!wallet || h.wallet === wallet) && h.qty > (asset === 'ETH' ? 0.0000001 : 0.000001))
+                    const lots = (lotsData.holdings || []).filter(h => h.asset === asset && (!wallet || h.wallet === wallet) && h.qty > (asset === 'ETH' || asset === 'BNB' ? 0.0000001 : 0.000001))
                         .sort((a, b) => (b.unitCost != null) - (a.unitCost != null) || (b.unitCost ?? 0) - (a.unitCost ?? 0) || String(a.acquired).localeCompare(String(b.acquired)));
                     const now = Date.now();
                     const year = new Date().getUTCFullYear();
@@ -108,7 +113,7 @@ public static partial class WebDashboard
                     }
                     $('op-tiles').innerHTML =
                         tile(`${asset} held`, qtyFmt(heldQty, asset), `Cost basis ${usd(heldCost)}`) +
-                        tile('Sale price', px != null ? '$' + Number(px).toFixed(asset === 'ETH' ? 2 : 5) : '–', Number($('op-price').value) > 0 ? 'Your price' : 'Today\x27s price (DefiLlama)') +
+                        tile('Sale price', px != null ? '$' + pxFmt(px, asset) : '–', Number($('op-price').value) > 0 ? 'Your price' : 'Today\x27s price (DefiLlama)') +
                         tile('Value at that price', px != null ? usd(heldQty * px) : '–', `Unrealized ${px != null ? usd(heldQty * px - heldCost) : '–'}`) +
                         tile(`Realized in ${year} so far`, usd(realizedGain), `${realized.length} sale lines (Tax Report section 4a)`) +
                         tile('Largest loss available', usd(maxLoss), `Sell ${qtyFmt(maxLossQty, asset)} ${asset} (every lot above the sale price)`) +
@@ -117,7 +122,7 @@ public static partial class WebDashboard
                     const b = balances && balances.b, s = balances && balances.s;
                     const where = [];
                     for (const w of ((b && b.wallets) || []).filter(w => !wallet || w.address === wallet))
-                        for (const ch of w.chains) for (const x of ch.balances.filter(x => x.symbol === asset)) where.push(`${esc(W.label(w.address) || w.address.slice(0, 6) + '…')} on ${ch.chain[0].toUpperCase() + ch.chain.slice(1)}: ${qtyFmt(x.amount, asset)} ${asset}`);
+                        for (const ch of w.chains) for (const x of ch.balances.filter(x => x.symbol === asset)) where.push(`${esc(W.label(w.address) || w.address.slice(0, 6) + '…')} on ${ch.chain === 'bsc' ? 'BNB Chain' : ch.chain[0].toUpperCase() + ch.chain.slice(1)}: ${qtyFmt(x.amount, asset)} ${asset}`);
                     if (asset === 'TITN') for (const w of ((s && s.wallets) || []).filter(w => (!wallet || w.address === wallet) && w.titnStaked > 0.01)) where.push(`${esc(W.label(w.address) || w.address.slice(0, 6) + '…')}: ${qtyFmt(w.titnStaked, 'TITN')} TITN staked on Base (unstake before selling)`);
                     $('op-where').innerHTML = where.length ? '<strong>Where it is now:</strong> ' + where.join(' · ') : '';
                     $('op-status').textContent = `Lots are kept per wallet and sold highest cost first (your standing order), the same as the Tax Report. Gains and losses here are estimates at the sale price and leave out network fees.${lots.some(l => l.unitCost == null) ? ' Some lots have no known cost and are listed last.' : ''}`;
@@ -126,7 +131,7 @@ public static partial class WebDashboard
                         const value = px != null ? l.qty * px : null, gain = value != null && l.unitCost != null ? value - l.unitCost * l.qty : null;
                         if (gain != null) running += gain;
                         const long = l.acquired && (now - Date.parse(l.acquired)) / 86400000 > 365;
-                        return `<tr><td>${i + 1}</td><td>${esc(W.label(l.wallet) || l.wallet.slice(0, 6) + '…')}</td><td>${esc(String(l.acquired || '').slice(0, 10))}</td><td>${long ? 'Long' : 'Short'}</td><td style="text-align: right;">${qtyFmt(l.qty, asset)}</td><td style="text-align: right;">${l.unitCost == null ? '<span class="tr-flag">unknown</span>' : '$' + Number(l.unitCost).toFixed(asset === 'ETH' ? 2 : 5)}</td><td style="text-align: right;">${l.cost == null ? '–' : usd(l.cost)}</td><td style="text-align: right;">${value == null ? '–' : usd(value)}</td><td style="text-align: right;">${gain == null ? '–' : usd(gain)}</td><td style="text-align: right;">${usd(running)}</td><td style="font-size: 12px;">${esc(l.how)}</td></tr>`;
+                        return `<tr><td>${i + 1}</td><td>${esc(W.label(l.wallet) || l.wallet.slice(0, 6) + '…')}</td><td>${esc(String(l.acquired || '').slice(0, 10))}</td><td>${long ? 'Long' : 'Short'}</td><td style="text-align: right;">${qtyFmt(l.qty, asset)}</td><td style="text-align: right;">${l.unitCost == null ? '<span class="tr-flag">unknown</span>' : '$' + pxFmt(l.unitCost, asset)}</td><td style="text-align: right;">${l.cost == null ? '–' : usd(l.cost)}</td><td style="text-align: right;">${value == null ? '–' : usd(value)}</td><td style="text-align: right;">${gain == null ? '–' : usd(gain)}</td><td style="text-align: right;">${usd(running)}</td><td style="font-size: 12px;">${esc(l.how)}</td></tr>`;
                     }).join('') || `<tr><td colspan="11" style="text-align: center; color: var(--text-secondary);">No ${asset} held${wallet ? ' in this wallet' : ''}.</td></tr>`;
                 };
                 for (const id of ['op-asset', 'op-wallet']) $(id).addEventListener('change', render);

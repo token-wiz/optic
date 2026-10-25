@@ -37,7 +37,8 @@ public static partial class WebDashboard
     const string TitnAirdropContract = "0x6d3261c6e1cb05e0fd0132b6d962ca8fabb109ac";
     const string ZeroAddress = "0x0000000000000000000000000000000000000000";
     static readonly HashSet<string> TgtTokens = new() { "0x429fed88f10285e61b12bdf00848315fbdfcc341", "0x108a850856db3f85d0269a2693d896b394c80325" };
-    static readonly HashSet<string> TitnStakingContracts = new() { TitnStakingContract, "0x6745c897ab1f4fda9f7700e8be6ea2ee03672759" };
+    // Staking contracts: tokens sent in stay yours (the lots stay in the wallet); NILA's also pays its rewards from here.
+    static readonly HashSet<string> TitnStakingContracts = new() { TitnStakingContract, "0x6745c897ab1f4fda9f7700e8be6ea2ee03672759", NilaStakingContract };
     static readonly HashSet<string> TokenBridgeContracts = new()
     {
         "0xa3a7b6f88361f48403514059f1f16c8e78d60eec", // Arbitrum L1 gateway router
@@ -60,11 +61,22 @@ public static partial class WebDashboard
         "0x2cff890f0378a11913b6129b2e97417a2c302680",
         "0xf5e10380213880111522dd0efd3dbb45b9f62bcc", // bridge vault: pays out ETH sent to its one-time "Deposit" contracts on another network
         "0x79001a5e762f3befc8e5871b42f6734e00498920", // the same bridge's vault on Arbitrum
+        "0xf5042e6ffac5a625d4e7848e0b01373d8eb9e222", // Relay router: delivers what a MetaMask Bridge / Relay order bought
+        "0xf70da97812cb96acdf810712aa562db8dfa3dbef", // Relay solver (pays out USDT / ETH)
+        "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251", // cross-chain swap contract on BNB Chain (delivered NILA bought with ETH)
+        "0xb685760ebd368a891f27ae547391f4e2a289895b", // Bridgers: delivered BNB for ETH
+        "0xb01caea8c6c47bbf4f4b4c5080ca642043359c2e", // bridge gas top-up (small ETH / BNB with a bridge order)
+    };
+    // Bridge entry contracts: native coin sent to them pays for something delivered on another network.
+    static readonly HashSet<string> BridgeRouters = new()
+    {
+        "0x0439e60f02a8900a951603950d8d4527f400c3f1", // MetaMask Bridge (MetaBridge) on Ethereum
+        "0xa20ecbc821fb54064aa7b5c6ac81173b8b34df71", // MetaMask Bridge on Base
+        "0x23981fc34e69eedfe2bd9a0a9fcb0719fe09dbfc", // MetaMask Bridge on Arbitrum
     };
     // Exchange deposit addresses the user sent ETH to (moves into their own exchange account, not sales).
     static readonly HashSet<string> ExchangeDepositAddresses = new()
     {
-        "0x2d4a9192465d6b7058030396feadee5520595a44", // same deposit address on every network (exchange-style)
         "0x52968330c043ae19a6d12e86854a42e40be8d8a3", // forwards within minutes to the exchange wallet 0x8679…3e83
         "0xf5710b2dafedcc4ff758661b35812cac0d393340", // followed by a USDT withdrawal from the exchange wallet 0xf206…f344
     };
@@ -122,6 +134,7 @@ public static partial class WebDashboard
     // Transactions of the address with their network fee (cached 3 hours).
     static async Task<List<EvmTx>> LoadEvmTxsAsync(string chain, string address, bool refresh, CancellationToken ct)
     {
+        if (chain == "bsc") return await LoadBscTxsAsync(address, refresh, ct);
         var path = Path.Combine(Environment.CurrentDirectory, "odata", "evm", $"{chain}-{address}-txs-v2.json");
         if (!refresh && File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < TimeSpan.FromHours(3))
             return JsonSerializer.Deserialize<List<EvmTx>>(await File.ReadAllTextAsync(path, ct)) ?? new();
@@ -147,6 +160,7 @@ public static partial class WebDashboard
     // ETH that reached the address from contracts (swap outputs, refunds, exchange withdrawals), cached 3 hours.
     static async Task<List<EvmInternal>> LoadEvmInternalsAsync(string chain, string address, bool refresh, CancellationToken ct)
     {
+        if (chain == "bsc") return await LoadBscInternalsAsync(address, refresh, ct);
         var path = Path.Combine(Environment.CurrentDirectory, "odata", "evm", $"{chain}-{address}-internal.json");
         if (!refresh && File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < TimeSpan.FromHours(3))
             return JsonSerializer.Deserialize<List<EvmInternal>>(await File.ReadAllTextAsync(path, ct)) ?? new();
@@ -250,9 +264,13 @@ public static partial class WebDashboard
         public bool Used, Solver;
     }
 
-    static readonly HashSet<string> UsdtTokens = new() { "0xdac17f958d2ee523a2206206994597c13d831ec7", "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9" };
-    static bool IsUsdToken(string token) => EvmStablecoins.Contains(token) || token is "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" or "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    static readonly HashSet<string> UsdtTokens = new() { "0xdac17f958d2ee523a2206206994597c13d831ec7", "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", BscUsdt };
+    static bool IsUsdToken(string token) => EvmStablecoins.Contains(token) || token is "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" or "0xdac17f958d2ee523a2206206994597c13d831ec7" or BscUsdt or BscUsdc;
     static bool IsExplainedContract(string a) => TitnKnownContracts.Contains(a) || TitnStakingContracts.Contains(a) || TokenBridgeContracts.Contains(a) || a == MergeTgtContract || a == ZeroAddress || TitnRewardSources.ContainsKey(a);
+
+    // A payment and a delivery belong together only if their values are of the same size (a bridge or solver keeps a
+    // fee, and day prices are rough); a small gas top-up never takes a large payment as its cost.
+    static bool CloseValue(decimal paid, decimal? got) => got is not { } g || g <= 0 || paid <= 0 || (g >= paid * 0.25m && g <= paid * 4m);
 
     sealed record LegNet(string Asset, decimal Qty, HashSet<string> Counterparties, bool Plain);
 
@@ -276,12 +294,20 @@ public static partial class WebDashboard
             var tgtPx = await LoadDailyPricesAsync(TgtPriceKey, refresh, ct);
             var titnPx = await LoadDailyPricesAsync(TitnPriceKey, refresh, ct);
             var ethPx = await LoadDailyPricesAsync("coingecko:ethereum", refresh, ct);
+            var bnbPx = await LoadDailyPricesAsync(BnbPriceKey, refresh, ct);
+            var nilaPx = await LoadDailyPricesAsync(NilaPriceKey, refresh, ct);
+            var patriotPx = await LoadDailyPricesAsync(PatriotPriceKey, refresh, ct);
             static decimal? Px(SortedDictionary<string, decimal> s, DateTime t)
             {
                 for (var i = 0; i < 4; i++) if (s.TryGetValue(t.AddDays(-i).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), out var p)) return p;
                 return null;
             }
-            decimal EthUsd(decimal qty, DateTime t) => Px(ethPx, t) is { } p ? Math.Round(qty * p, 2) : 0m;
+            // The network's own coin (ETH, or BNB on BNB Chain) at its value that day.
+            decimal NatUsd(string chain, decimal qty, DateTime t) => Px(chain == "bsc" ? bnbPx : ethPx, t) is { } p ? Math.Round(qty * p, 2) : 0m;
+            decimal? AssetPx(string asset, DateTime t) => asset switch
+            {
+                "TITN" => Px(titnPx, t), "TGT" => Px(tgtPx, t), "NILA" => Px(nilaPx, t), "PATRIOT" => Px(patriotPx, t), _ => null,
+            };
 
             // One row per (wallet, transaction): net change of TGT, TITN, stablecoins and ETH, and the fee if the wallet sent it.
             var rows = new List<EvmRow>();
@@ -292,8 +318,9 @@ public static partial class WebDashboard
             foreach (var w in wallets)
             {
                 midgard.AddRange(await LoadMidgardSwapsAsync(w.Address, refresh, ct));
-                foreach (var chain in EvmExplorersAll.Keys)
+                foreach (var chain in EvmChainsAll)
                 {
+                    var nat = NativeOf(chain);
                     var transfers = (await LoadEvmTransfersAsync(chain, w.Address, refresh, ct)).Where(t => t.From == w.Address || t.To == w.Address).ToList();
                     var txList = await LoadEvmTxsAsync(chain, w.Address, refresh, ct);
                     var internals = await LoadEvmInternalsAsync(chain, w.Address, refresh, ct);
@@ -312,7 +339,7 @@ public static partial class WebDashboard
                             sl.Counterparties.Add(sign > 0 ? t.From : t.To);
                             continue;
                         }
-                        var asset = t.Token == TitnToken ? "TITN" : TgtTokens.Contains(t.Token) ? "TGT" : null;
+                        var asset = TrackedTokenAsset(chain, t.Token);
                         if (asset is null) continue;
                         var cp = sign > 0 ? t.From : t.To;
                         if (!r.Legs.TryGetValue(asset, out var leg)) r.Legs[asset] = leg = new LegNet(asset, 0, new HashSet<string>(), t.Method is "transfer" or "0xa9059cbb");
@@ -337,11 +364,11 @@ public static partial class WebDashboard
                             var to = transfers.Where(t => t.Tx == r.Tx && t.From == w.Address && IsUsdToken(t.Token)).Select(t => t.To).FirstOrDefault() ?? "";
                             if (!own.Contains(to) && !IsExplainedContract(to)) payments.Add(new SolverLeg { Wallet = w.Address, Chain = chain, Tx = r.Tx, Time = r.Time, Asset = "USD", Qty = -r.Usd, Usd = -r.Usd, What = $"{-r.Usd:N2} USDC/USDT on {chain}" });
                         }
-                        if (r.EthOut > 0 && r.Legs.Count == 0 && Math.Abs(r.Usd) < 0.01m && !own.Contains(r.EthOutTo) && !IsExplainedContract(r.EthOutTo) && r.Method is "" or null)
-                            payments.Add(new SolverLeg { Wallet = w.Address, Chain = chain, Tx = r.Tx, Time = r.Time, Asset = "ETH", Qty = r.EthOut, Usd = EthUsd(r.EthOut, r.Time), What = $"{r.EthOut:0.######} ETH on {chain}" });
+                        if (r.EthOut > 0 && r.Legs.Count == 0 && Math.Abs(r.Usd) < 0.01m && !own.Contains(r.EthOutTo) && !IsExplainedContract(r.EthOutTo) && (r.Method is "" or null || BridgeRouters.Contains(r.EthOutTo)))
+                            payments.Add(new SolverLeg { Wallet = w.Address, Chain = chain, Tx = r.Tx, Time = r.Time, Asset = nat, Qty = r.EthOut, Usd = NatUsd(chain, r.EthOut, r.Time), What = $"{r.EthOut:0.######} {nat} on {chain}" });
                         // Deliveries: anything from a known solver, and plain ETH from any outside address (a bridge's relayer).
                         if (r.EthIn > 0 && (r.EthInFrom.Overlaps(CrossChainSolvers) || (r.EthPlainIn && !r.EthInFrom.Overlaps(own) && !r.EthInFrom.Any(IsExplainedContract))))
-                            deliveries.Add(new SolverLeg { Solver = r.EthInFrom.Overlaps(CrossChainSolvers), Wallet = w.Address, Chain = chain, Tx = r.Tx, Time = r.Time, Asset = "ETH", Qty = r.EthIn, Usd = EthUsd(r.EthIn, r.Time), What = $"{r.EthIn:0.######} ETH on {chain}" });
+                            deliveries.Add(new SolverLeg { Solver = r.EthInFrom.Overlaps(CrossChainSolvers), Wallet = w.Address, Chain = chain, Tx = r.Tx, Time = r.Time, Asset = nat, Qty = r.EthIn, Usd = NatUsd(chain, r.EthIn, r.Time), What = $"{r.EthIn:0.######} {nat} on {chain}" });
                         foreach (var t in transfers.Where(t => t.Tx == r.Tx && t.To == w.Address && CrossChainSolvers.Contains(t.From) && IsUsdToken(t.Token) && t.Amount >= 0.01m))
                             deliveries.Add(new SolverLeg { Solver = true, Wallet = w.Address, Chain = chain, Tx = r.Tx, Time = r.Time, Asset = "USD", Qty = t.Amount, Usd = t.Amount, What = $"{t.Amount:N2} {t.Symbol} on {chain}" });
                         rows.Add(r);
@@ -389,7 +416,7 @@ public static partial class WebDashboard
                     lot.Qty -= q; qty -= q;
                     taken.Add((lot, q));
                 }
-                if (qty > (asset == "ETH" ? 0.0000001m : 0.0001m)) taken.Add((new TitnLot { Id = "missing", Asset = asset, Qty = qty, UnitCost = null, Acquired = DateTime.MinValue, How = "No recorded acquisition (held before this history, or received in a way not tracked)" }, qty));
+                if (qty > (asset is "ETH" or "BNB" ? 0.0000001m : 0.0001m)) taken.Add((new TitnLot { Id = "missing", Asset = asset, Qty = qty, UnitCost = null, Acquired = DateTime.MinValue, How = "No recorded acquisition (held before this history, or received in a way not tracked)" }, qty));
                 return taken;
             }
 
@@ -397,7 +424,7 @@ public static partial class WebDashboard
             {
                 foreach (var (lot, q) in Take(wallet, asset, qty))
                 {
-                    if (q < (asset == "ETH" ? 0.000000001m : 0.0001m)) continue; // rounding dust
+                    if (q < (asset is "ETH" or "BNB" ? 0.000000001m : 0.0001m)) continue; // rounding dust
                     var share = qty > 0 ? q / qty : 0;
                     decimal? cost = lot.UnitCost is { } u ? Math.Round(u * q, 2) : null;
                     decimal? pr = proceeds is { } p ? Math.Round(p * share, 2) : null;
@@ -490,12 +517,13 @@ public static partial class WebDashboard
                 while (r.Time.Year > snapYear) { yearEnd[snapYear] = Snapshot(); snapYear++; }
                 if (handled.Contains(r.Wallet + "|" + r.Tx)) continue;
                 rowFeeShare = 0m;
+                var nat = NativeOf(r.Chain);
 
                 // The network fee: ETH spent at its value that day; half may be allocated to the trade below.
-                var feeUsd = r.Fee > 0 ? EthUsd(r.Fee, r.Time) : 0m;
+                var feeUsd = r.Fee > 0 ? NatUsd(r.Chain, r.Fee, r.Time) : 0m;
                 if (r.Fee > 0)
                 {
-                    Dispose(r.Wallet, r.Chain, "ETH", r.Fee, feeUsd, r.Time, r.Tx, "ETH spent on the network fee (gas)");
+                    Dispose(r.Wallet, r.Chain, nat, r.Fee, feeUsd, r.Time, r.Tx, $"{nat} spent on the network fee (gas)");
                     feeTotal[r.Time.Year] = (feeTotal.TryGetValue(r.Time.Year, out var ft) ? ft : 0) + feeUsd;
                 }
                 var halfFee = Math.Round(feeUsd / 2, 4);
@@ -510,7 +538,7 @@ public static partial class WebDashboard
                 {
                     var asset = leg.Asset; var qty = Math.Abs(leg.Qty); var inbound = leg.Qty > 0;
                     var cps = leg.Counterparties;
-                    var px = asset == "TITN" ? Px(titnPx, r.Time) : Px(tgtPx, r.Time);
+                    var px = AssetPx(asset, r.Time);
                     if (label is not null)
                     {
                         var kind = label["kind"]?.ToString() ?? "";
@@ -521,6 +549,12 @@ public static partial class WebDashboard
                         else if (kind == "gift-out") Take(r.Wallet, asset, qty);
                         if (label["provisional"] is JsonValue pv0 && pv0.TryGetValue<bool>(out var prov) && prov) notes.Add($"Provisional cost for {qty:N2} {asset} received {r.Time:yyyy-MM-dd}: {note}.");
                         if (kind == "purchase" && usd is null) notes.Add($"Cost not entered yet for {qty:N0} {asset} received {r.Time:yyyy-MM-dd} ({note}).");
+                        continue;
+                    }
+                    // NILA staking: a claimReward pays the reward (income at that day's value); a withdraw returns your stake.
+                    if (inbound && cps.Contains(NilaStakingContract) && r.Method == NilaClaimSelector)
+                    {
+                        Acquire(r.Wallet, asset, qty, px is { } pn ? qty * pn : null, r.Time, "NILA staking reward claimed (income at that day's value)");
                         continue;
                     }
                     // Not a sale: staking, bridging between networks.
@@ -621,26 +655,26 @@ public static partial class WebDashboard
                     }
                     // Paid or received in the same transaction (DEX swaps, aggregators, relayers).
                     var ethPaid = ethNet < 0 ? -ethNet : 0m; var ethGot = ethNet > 0 ? ethNet : 0m;
-                    var ethPaidUsd = EthUsd(ethPaid, r.Time); var ethGotUsd = EthUsd(ethGot, r.Time);
+                    var ethPaidUsd = NatUsd(r.Chain, ethPaid, r.Time); var ethGotUsd = NatUsd(r.Chain, ethGot, r.Time);
                     if (inbound && (r.Usd < -0.01m || ethPaid > 0))
                     {
                         var usdPaid = Math.Max(-r.Usd, 0m); var total = usdPaid + ethPaidUsd;
-                        Acquire(r.Wallet, asset, qty, total + halfFee, r.Time, $"Bought: {(usdPaid > 0 ? $"{usdPaid:N2} USDC/USDT" : "")}{(usdPaid > 0 && ethPaid > 0 ? " + " : "")}{(ethPaid > 0 ? $"{ethPaid:0.######} ETH" : "")}{(halfFee > 0 ? $", plus half the network fee (${halfFee:N2})" : "")}");
-                        if (ethPaid > 0) { Dispose(r.Wallet, r.Chain, "ETH", ethPaid, ethPaidUsd - (total > 0 ? halfFee * ethPaidUsd / total : 0), r.Time, r.Tx, $"ETH spent buying {qty:N2} {asset}"); ethDone = true; }
+                        Acquire(r.Wallet, asset, qty, total + halfFee, r.Time, $"Bought: {(usdPaid > 0 ? $"{usdPaid:N2} USDC/USDT" : "")}{(usdPaid > 0 && ethPaid > 0 ? " + " : "")}{(ethPaid > 0 ? $"{ethPaid:0.######} {nat}" : "")}{(halfFee > 0 ? $", plus half the network fee (${halfFee:N2})" : "")}");
+                        if (ethPaid > 0) { Dispose(r.Wallet, r.Chain, nat, ethPaid, ethPaidUsd - (total > 0 ? halfFee * ethPaidUsd / total : 0), r.Time, r.Tx, $"{nat} spent buying {qty:N2} {asset}"); ethDone = true; }
                         if (usdPaid > 0) UsdFeeShare(r.Wallet, r.Time, usdPaid, total > 0 ? halfFee * usdPaid / total : 0);
                         continue;
                     }
                     if (!inbound && (r.Usd > 0.01m || ethGot > 0))
                     {
                         var usdGot = Math.Max(r.Usd, 0m); var total = usdGot + ethGotUsd;
-                        Dispose(r.Wallet, r.Chain, asset, qty, total - halfFee, r.Time, r.Tx, $"Sold for {(usdGot > 0 ? $"{usdGot:N2} USDC" : "")}{(usdGot > 0 && ethGot > 0 ? " + " : "")}{(ethGot > 0 ? $"{ethGot:0.######} ETH" : "")}{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
-                        if (ethGot > 0) { Acquire(r.Wallet, "ETH", ethGot, ethGotUsd + (total > 0 ? halfFee * ethGotUsd / total : 0), r.Time, $"Received for {qty:N2} {asset} sold"); ethDone = true; }
+                        Dispose(r.Wallet, r.Chain, asset, qty, total - halfFee, r.Time, r.Tx, $"Sold for {(usdGot > 0 ? $"{usdGot:N2} USDC" : "")}{(usdGot > 0 && ethGot > 0 ? " + " : "")}{(ethGot > 0 ? $"{ethGot:0.######} {nat}" : "")}{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
+                        if (ethGot > 0) { Acquire(r.Wallet, nat, ethGot, ethGotUsd + (total > 0 ? halfFee * ethGotUsd / total : 0), r.Time, $"Received for {qty:N2} {asset} sold"); ethDone = true; }
                         continue;
                     }
                     // Cross-chain solver swaps: the solver delivers what you bought within minutes of your payment.
                     if (inbound && cps.Overlaps(CrossChainSolvers))
                     {
-                        var pay = payments.Where(p => !p.Used && (r.Time - p.Time).TotalMinutes is >= -2 and <= 10).OrderBy(p => Math.Abs((r.Time - p.Time).TotalSeconds)).FirstOrDefault();
+                        var pay = payments.Where(p => !p.Used && (r.Time - p.Time).TotalMinutes is >= -2 and <= 10 && CloseValue(p.Usd, px is { } pv0 ? qty * pv0 : null)).OrderBy(p => Math.Abs((r.Time - p.Time).TotalSeconds)).FirstOrDefault();
                         if (pay is not null)
                         {
                             pay.Used = true;
@@ -652,12 +686,12 @@ public static partial class WebDashboard
                     }
                     if (!inbound && leg.Plain)
                     {
-                        var got = deliveries.Where(d => d.Solver && !d.Used && (d.Time - r.Time).TotalMinutes is >= -1 and <= 10).OrderBy(d => d.Time).FirstOrDefault();
+                        var got = deliveries.Where(d => d.Solver && !d.Used && (d.Time - r.Time).TotalMinutes is >= -1 and <= 10 && CloseValue(px is { } pv1 ? qty * pv1 : 0m, d.Usd)).OrderBy(d => d.Time).FirstOrDefault();
                         if (got is not null)
                         {
                             got.Used = true;
                             Dispose(r.Wallet, r.Chain, asset, qty, got.Usd - halfFee, r.Time, r.Tx, $"Sold through a cross-chain solver: received {got.What}{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
-                            if (got.Asset == "ETH") { Acquire(got.Wallet, "ETH", got.Qty, got.Usd + halfFee, got.Time, $"Received for {qty:N2} {asset} sold through a cross-chain solver"); handled.Add(got.Wallet + "|" + got.Tx); }
+                            if (got.Asset == nat) { Acquire(got.Wallet, nat, got.Qty, got.Usd + halfFee, got.Time, $"Received for {qty:N2} {asset} sold through a cross-chain solver"); handled.Add(got.Wallet + "|" + got.Tx); }
                             continue;
                         }
                     }
@@ -676,90 +710,91 @@ public static partial class WebDashboard
                 var tokenMoves = r.Legs.Values.Any(l => Math.Abs(l.Qty) >= 0.000001m);
                 if (ethNet < 0)
                 {
-                    var q = -ethNet; var usd = EthUsd(q, r.Time);
+                    var q = -ethNet; var usd = NatUsd(r.Chain, q, r.Time);
                     if (own.Contains(r.EthOutTo))
                     {
-                        Move(r.Wallet, r.EthOutTo, "ETH", q, q, " (moved from " + r.Wallet[..6] + "…)");
+                        Move(r.Wallet, r.EthOutTo, nat, q, q, " (moved from " + r.Wallet[..6] + "…)");
                         handled.Add(r.EthOutTo + "|" + r.Tx);
                     }
                     else if (midgardByInTx.TryGetValue(r.Tx, out var mg))
                     {
                         // ETH paid into THORChain / Maya. A refunded swap is not a sale (the ETH comes back).
                         if (mg.Type == "swap") disposedMidgardIn.Add(mg.InTx);
-                        if (mg.Type == "swap") Dispose(r.Wallet, r.Chain, "ETH", q, mg.InUsd - halfFee, r.Time, r.Tx, $"ETH swapped through {mg.Network} for {string.Join(" + ", mg.Outs.Where(o => o.Address == r.Wallet).Select(o => $"{o.Amount:0.####} {o.Asset.Split('-')[0]}"))}{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
+                        if (mg.Type == "swap") Dispose(r.Wallet, r.Chain, nat, q, mg.InUsd - halfFee, r.Time, r.Tx, $"{nat} swapped through {mg.Network} for {string.Join(" + ", mg.Outs.Where(o => o.Address == r.Wallet).Select(o => $"{o.Amount:0.####} {o.Asset.Split('-')[0]}"))}{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
                     }
                     else if (r.Usd > 0.01m)
                     {
-                        Dispose(r.Wallet, r.Chain, "ETH", q, r.Usd - halfFee, r.Time, r.Tx, $"ETH sold for {r.Usd:N2} USDC/USDT{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
+                        Dispose(r.Wallet, r.Chain, nat, q, r.Usd - halfFee, r.Time, r.Tx, $"{nat} sold for {r.Usd:N2} USDC/USDT{(halfFee > 0 ? $", less half the network fee (${halfFee:N2})" : "")}");
                     }
                     else if (!tokenMoves && r.Method is "" or null && !IsExplainedContract(r.EthOutTo))
                     {
                         // Plain ETH to a one-time address: the payment side of a solver bridge or swap. An ETH delivery
                         // must be 80–100% of what was sent (the rest is the bridge's fee).
-                        var got = deliveries.Where(d => !d.Used && (d.Time - r.Time).TotalMinutes is >= -1 and <= 10 && (d.Asset != "ETH" || (d.Qty <= q * 1.0001m && d.Qty >= q * 0.8m))).OrderBy(d => d.Time).FirstOrDefault();
+                        var got = deliveries.Where(d => !d.Used && (d.Time - r.Time).TotalMinutes is >= -1 and <= 10 && (d.Asset != nat || (d.Qty <= q * 1.0001m && d.Qty >= q * 0.8m))).OrderBy(d => d.Time).FirstOrDefault();
                         var tokenDelivery = rows.Any(x => x.Legs.Values.Any(l => l.Qty > 0 && l.Counterparties.Overlaps(CrossChainSolvers)) && (x.Time - r.Time).TotalMinutes is >= -1 and <= 10);
-                        if (got is not null && got.Asset == "ETH")
+                        if (got is not null && got.Asset == nat)
                         {
                             got.Used = true;
                             var arrived = Math.Min(q, got.Qty);
-                            Move(r.Wallet, got.Wallet, "ETH", arrived, arrived, $" (bridged {r.Chain}→{got.Chain})");
+                            Move(r.Wallet, got.Wallet, nat, arrived, arrived, $" (bridged {r.Chain}→{got.Chain})");
                             // What the bridge kept is ETH spent on its fee (not added to the moved ETH's cost).
-                            if (q - arrived > 0.000000001m) Dispose(r.Wallet, r.Chain, "ETH", q - arrived, EthUsd(q - arrived, r.Time), r.Time, r.Tx, $"ETH kept by the bridge as its fee ({r.Chain}→{got.Chain})");
+                            if (q - arrived > 0.000000001m) Dispose(r.Wallet, r.Chain, nat, q - arrived, NatUsd(r.Chain, q - arrived, r.Time), r.Time, r.Tx, $"{nat} kept by the bridge as its fee ({r.Chain}→{got.Chain})");
                             handled.Add(got.Wallet + "|" + got.Tx);
                         }
-                        else if (got is not null && got.Asset == "USD") { got.Used = true; Dispose(r.Wallet, r.Chain, "ETH", q, got.Usd - halfFee, r.Time, r.Tx, $"ETH sold through a cross-chain solver for {got.What}"); }
-                        else if (tokenDelivery) Dispose(r.Wallet, r.Chain, "ETH", q, usd - halfFee, r.Time, r.Tx, "ETH paid to a cross-chain solver for TITN or TGT, at its value that day");
+                        else if (got is not null && got.Asset != "USD" && got.Asset != nat) { got.Used = true; Dispose(r.Wallet, r.Chain, nat, q, usd - halfFee, r.Time, r.Tx, $"{nat} bridged into {got.What} (a swap), at its value that day"); }
+                        else if (got is not null && got.Asset == "USD") { got.Used = true; Dispose(r.Wallet, r.Chain, nat, q, got.Usd - halfFee, r.Time, r.Tx, $"{nat} sold through a cross-chain solver for {got.What}"); }
+                        else if (tokenDelivery) Dispose(r.Wallet, r.Chain, nat, q, usd - halfFee, r.Time, r.Tx, $"{nat} paid to a cross-chain solver for tokens it delivered, at its value that day");
                         else if (ExchangeDepositAddresses.Contains(r.EthOutTo))
                         {
                             // Moved into your exchange account: not a sale; the ETH leaves the wallets tracked here.
-                            Take(r.Wallet, "ETH", q);
-                            movedToExchange.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = "ETH", qty = q, to = r.EthOutTo, valueThatDay = (decimal?)usd });
+                            Take(r.Wallet, nat, q);
+                            movedToExchange.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = nat, qty = q, to = r.EthOutTo, valueThatDay = (decimal?)usd });
                         }
-                        else unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = "ETH", qty = q, direction = "out", counterparty = r.EthOutTo, valueThatDay = (decimal?)usd });
+                        else unclassified.Add(new { wallet = r.Wallet, chain = r.Chain, time = r.Time, tx = r.Tx, asset = nat, qty = q, direction = "out", counterparty = r.EthOutTo, valueThatDay = (decimal?)usd });
                     }
                     else
                     {
                         // ETH sent along with a contract call (bridge or messaging fee, service): spent at its value.
-                        Dispose(r.Wallet, r.Chain, "ETH", q, usd, r.Time, r.Tx, "ETH paid to a contract with the transaction (bridge or service fee)");
+                        Dispose(r.Wallet, r.Chain, nat, q, usd, r.Time, r.Tx, BridgeRouters.Contains(r.EthOutTo) ? $"{nat} paid into MetaMask Bridge for what it delivered on another network, at its value that day" : $"{nat} paid to a contract with the transaction (bridge or service fee)");
                     }
                 }
                 else
                 {
-                    var q = ethNet; var usd = EthUsd(q, r.Time);
+                    var q = ethNet; var usd = NatUsd(r.Chain, q, r.Time);
                     var fromOwn = r.EthInFrom.FirstOrDefault(own.Contains);
                     var mOut = midgard.FirstOrDefault(m => !usedMidgard.Contains(m) && m.Outs.Any(o => o.Address == r.Wallet && o.Asset is "ETH.ETH" or "ARB.ETH" or "BASE.ETH" && Math.Abs(o.Amount - q) <= Math.Max(0.00002m, q * 0.01m)) && (r.Time - m.Time).TotalDays is > -0.1 and < 10);
-                    if (fromOwn is not null) Acquire(r.Wallet, "ETH", q, usd, r.Time, "Received from your own wallet (not matched to its send)");
+                    if (fromOwn is not null) Acquire(r.Wallet, nat, q, usd, r.Time, "Received from your own wallet (not matched to its send)");
                     else if (mOut is not null)
                     {
                         usedMidgard.Add(mOut);
                         if (mOut.Type == "swap" && !mOut.InAsset.EndsWith(".ETH", StringComparison.Ordinal))
                         {
                             var srcHalf = halfFeeByTx.TryGetValue(mOut.InTx, out var sh) ? sh : 0m;
-                            Acquire(r.Wallet, "ETH", q, mOut.InUsd + srcHalf, r.Time, $"Bought through {mOut.Network}: {mOut.InAmount:0.####} {mOut.InAsset.Split('-')[0]} (${mOut.InUsd:N2})");
+                            Acquire(r.Wallet, nat, q, mOut.InUsd + srcHalf, r.Time, $"Bought through {mOut.Network}: {mOut.InAmount:0.####} {mOut.InAsset.Split('-')[0]} (${mOut.InUsd:N2})");
                             if (mOut.InAsset.Contains("USD")) UsdFeeShare(r.Wallet, r.Time, mOut.InUsd, srcHalf);
                         }
                         else if (disposedMidgardIn.Contains(mOut.InTx) || !rows.Any(x => x.Tx == mOut.InTx))
                             // ETH coming back (a refund or change) from a deposit already counted as spent: received again at its value.
-                            Acquire(r.Wallet, "ETH", q, usd, r.Time, $"ETH returned by {mOut.Network} (refund or change)");
+                            Acquire(r.Wallet, nat, q, usd, r.Time, $"{nat} returned by {mOut.Network} (refund or change)");
                         // Otherwise it is the refund of a deposit that was never counted as spent: nothing to record.
                     }
                     else if (r.Usd < -0.01m)
                     {
-                        Acquire(r.Wallet, "ETH", q, -r.Usd + halfFee, r.Time, $"Bought with {-r.Usd:N2} USDC/USDT{(halfFee > 0 ? $", plus half the network fee (${halfFee:N2})" : "")}");
+                        Acquire(r.Wallet, nat, q, -r.Usd + halfFee, r.Time, $"Bought with {-r.Usd:N2} USDC/USDT{(halfFee > 0 ? $", plus half the network fee (${halfFee:N2})" : "")}");
                         UsdFeeShare(r.Wallet, r.Time, -r.Usd, halfFee);
                     }
                     else if (r.EthInFrom.Overlaps(CrossChainSolvers))
                     {
-                        var pay = payments.Where(p => !p.Used && p.Asset == "USD" && (r.Time - p.Time).TotalMinutes is >= -2 and <= 10).OrderBy(p => Math.Abs((r.Time - p.Time).TotalSeconds)).FirstOrDefault();
-                        if (pay is not null) { pay.Used = true; Acquire(r.Wallet, "ETH", q, pay.Usd + pay.FeeHalf, r.Time, $"Bought through a cross-chain solver: paid {pay.What}"); UsdFeeShare(pay.Wallet, pay.Time, pay.Usd, pay.FeeHalf); }
-                        else { Acquire(r.Wallet, "ETH", q, usd, r.Time, "Delivered by a cross-chain solver; no matching payment found, cost is that day's value"); provisionalEth = (provisionalEth.Qty + q, provisionalEth.Usd + usd, provisionalEth.N + 1); }
+                        var pay = payments.Where(p => !p.Used && (p.Asset == "USD" || p.Asset != nat) && CloseValue(p.Usd, usd) && (r.Time - p.Time).TotalMinutes is >= -2 and <= 10).OrderBy(p => Math.Abs((r.Time - p.Time).TotalSeconds)).FirstOrDefault();
+                        if (pay is not null) { pay.Used = true; Acquire(r.Wallet, nat, q, pay.Usd + pay.FeeHalf, r.Time, $"Bought through a cross-chain solver: paid {pay.What}"); UsdFeeShare(pay.Wallet, pay.Time, pay.Usd, pay.FeeHalf); }
+                        else { Acquire(r.Wallet, nat, q, usd, r.Time, "Delivered by a cross-chain solver; no matching payment found, cost is that day's value"); provisionalEth = (provisionalEth.Qty + q, provisionalEth.Usd + usd, provisionalEth.N + 1); }
                     }
-                    else if (r.EthInFrom.Overlaps(TokenBridgeContracts)) Acquire(r.Wallet, "ETH", q, usd, r.Time, "Unused bridge gas returned (cost = its value)");
+                    else if (r.EthInFrom.Overlaps(TokenBridgeContracts)) Acquire(r.Wallet, nat, q, usd, r.Time, "Unused bridge gas returned (cost = its value)");
                     else
                     {
                         // From an exchange (Coinbase and others) or another outside address: bought; cost is that day's
                         // price until the exchange's own records are loaded.
-                        Acquire(r.Wallet, "ETH", q, usd, r.Time, $"Received from {string.Join(",", r.EthInFrom)} (bought on an exchange; cost = that day's price, provisional)");
+                        Acquire(r.Wallet, nat, q, usd, r.Time, $"Received from {string.Join(",", r.EthInFrom)} (bought on an exchange; cost = that day's price, provisional)");
                         provisionalEth = (provisionalEth.Qty + q, provisionalEth.Usd + usd, provisionalEth.N + 1);
                     }
                 }
@@ -769,7 +804,8 @@ public static partial class WebDashboard
 
             if (provisionalEth.N > 0) notes.Add($"{provisionalEth.Qty:0.####} ETH received from exchanges or other outside addresses in {provisionalEth.N} transfers is costed at that day's price (${provisionalEth.Usd:N2}). Load your Coinbase transaction history to use what you actually paid.");
 
-            var price = new Dictionary<string, decimal?> { ["TITN"] = titnPx.Count > 0 ? titnPx.Last().Value : null, ["TGT"] = tgtPx.Count > 0 ? tgtPx.Last().Value : null, ["ETH"] = ethPx.Count > 0 ? ethPx.Last().Value : null };
+            decimal? LastPx(SortedDictionary<string, decimal> d) => d.Count > 0 ? d.Last().Value : null;
+            var price = new Dictionary<string, decimal?> { ["TITN"] = LastPx(titnPx), ["TGT"] = LastPx(tgtPx), ["ETH"] = LastPx(ethPx), ["BNB"] = LastPx(bnbPx), ["NILA"] = LastPx(nilaPx), ["PATRIOT"] = LastPx(patriotPx) };
             return new
             {
                 disposals,

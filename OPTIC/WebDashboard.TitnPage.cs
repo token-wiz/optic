@@ -53,7 +53,7 @@ public static partial class WebDashboard
                 const usd = (v) => v == null ? '–' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 const num = (v, d = 2) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: d });
                 const short = (a) => a.slice(0, 6) + '…' + a.slice(-4);
-                const scan = (chain, kind, v) => (chain === 'arbitrum' ? 'https://arbiscan.io/' : 'https://basescan.org/') + kind + '/' + v;
+                const scan = (chain, kind, v) => (chain === 'arbitrum' ? 'https://arbiscan.io/' : chain === 'bsc' ? 'https://bscscan.com/' : chain === 'ethereum' ? 'https://etherscan.io/' : 'https://basescan.org/') + kind + '/' + v;
                 const W = window.opticWallets;
                 const name = (a) => (W && W.label(a)) || short(a);
                 let data = null;

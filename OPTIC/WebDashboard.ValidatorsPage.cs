@@ -102,7 +102,9 @@ public static partial class WebDashboard
             const fmtTime = (v) => v && !String(v).startsWith('1970') ? String(v).replace('T', ' ').replace(/\.\d+/, '').replace('Z', ' UTC').slice(0, 20) : '–';
             const short = (a) => a && a.length > 24 ? a.slice(0, 14) + '…' + a.slice(-6) : (a || '');
             const params = new URLSearchParams(location.search);
-            let wallet = params.get('address') || window.opticWallets?.primary() || '';
+            // Your stake: the wallet in the link, else every saved Optio wallet added together.
+            const wallet = params.get('address') || '';
+            const myWallets = () => wallet ? [wallet] : (window.opticWallets?.list() || []).map(w => w.a);
             let data = null, tab = params.get('tab') || 'active', sortKey = 'tokensOpt', sortDir = 'desc', open = new Set();
 
             const statusBadge = (v) => v.status === 'bonded' ? '<span class="vx-badge ok">Active</span>'
@@ -154,7 +156,7 @@ public static partial class WebDashboard
                     <div><b>Rewards owed to its delegators</b>${fmtOpt(v.outstandingRewardsOpt)} OPT</div>
                     <div><b>Signing record</b>${u ? `${u.missed} missed of the last ${u.window} blocks · signing since block ${esc(u.startHeight)}${u.tombstoned ? ' · <span class="vx-badge bad">Tombstoned</span>' : ''}${fmtTime(u.jailedUntil) !== '–' ? `<span class="vx-sub">jailed until ${fmtTime(u.jailedUntil)}</span>` : ''}` : 'No signing info'}</div>
                     ${v.status !== 'bonded' && v.unbondingHeight && v.unbondingHeight !== '0' ? `<div><b>Unbonding</b>since block ${esc(v.unbondingHeight)} · completes ${fmtTime(v.unbondingTime)}</div>` : ''}
-                    ${mine(v) ? `<div><b>Your stake</b>${fmtOpt(mine(v))} OPT · pending rewards ${fmtOpt(data.you.rewards[v.operatorAddress])} OPT · <a href="/page/my-staking?address=${encodeURIComponent(wallet)}">My Staking</a></div>` : ''}
+                    ${mine(v) ? `<div><b>Your stake</b>${fmtOpt(mine(v))} OPT · pending rewards ${fmtOpt(data.you.rewards[v.operatorAddress])} OPT · <a href="/page/my-staking${wallet ? '?address=' + encodeURIComponent(wallet) : ''}">My Staking</a></div>` : ''}
                 </div>`;
             };
 
@@ -190,22 +192,38 @@ public static partial class WebDashboard
             };
 
             const renderWallets = () => {
-                const list = window.opticWallets?.list() || [];
-                $('vx-wallets').innerHTML = list.length
-                    ? 'Your stake shown for: ' + list.map(w => `<button type="button" class="vx-btn" data-wallet="${esc(w.a)}" aria-pressed="${w.a === wallet}" style="${w.a === wallet ? 'border-color: var(--accent-primary); color: var(--accent-primary);' : ''}">${esc(w.l || short(w.a))}${w.p ? ' (primary)' : ''}</button>`).join(' ')
-                    : 'Save your wallet on <a href="/page/my-wallets">My Wallets</a> to see your own stake here.';
+                const list = myWallets(), label = (a) => window.opticWallets?.label(a) || short(a);
+                $('vx-wallets').innerHTML = wallet
+                    ? `Your stake shown for ${esc(label(wallet))}. <a href="/page/validators${tab !== 'active' ? '?tab=' + encodeURIComponent(tab) : ''}">Show all my wallets</a>`
+                    : list.length
+                        ? `Your stake shown for all your Optio wallets: ${list.map(a => esc(label(a))).join(', ')}.`
+                        : 'Save your wallet on <a href="/page/my-wallets">My Wallets</a> to see your own stake here.';
             };
 
             const load = async (refresh) => {
                 $('vx-refresh').disabled = true;
                 $('vx-status').textContent = 'Reading validators from the chain…';
                 try {
-                    const q = new URLSearchParams();
-                    if (wallet) q.set('address', wallet);
-                    if (refresh) q.set('refresh', '1');
-                    const r = await fetch('/api/validators?' + q.toString());
-                    const j = await r.json();
-                    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+                    const get = async (a, fresh) => {
+                        const q = new URLSearchParams();
+                        if (a) q.set('address', a);
+                        if (fresh) q.set('refresh', '1');
+                        const r = await fetch('/api/validators?' + q.toString());
+                        const j = await r.json();
+                        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+                        return j;
+                    };
+                    // The first call refreshes the validator list if asked; the rest reuse it and add each wallet's stake.
+                    const [first, ...rest] = myWallets();
+                    const j = await get(first, refresh);
+                    if (rest.length && j.you) {
+                        for (const o of await Promise.all(rest.map(a => get(a, false)))) {
+                            if (!o.you) continue;
+                            for (const k of ['stake', 'rewards']) for (const [op, v] of Object.entries(o.you[k] || {})) j.you[k][op] = (j.you[k][op] || 0) + v;
+                            j.you.totalStakedOpt += o.you.totalStakedOpt; j.you.totalRewardsOpt += o.you.totalRewardsOpt;
+                        }
+                        j.you.address = '';
+                    }
                     data = j;
                     $('vx-status').textContent = `${j.network.counts.active} active of ${j.network.counts.total} validators · block ${Number(j.network.height || 0).toLocaleString('en-US')} · as of ${fmtTime(j.network.asOfUtc)}`;
                     tiles(); renderWallets(); render();
@@ -223,7 +241,6 @@ public static partial class WebDashboard
             }));
             $('vx-search').addEventListener('input', render);
             $('vx-refresh').addEventListener('click', () => load(true));
-            $('vx-wallets').addEventListener('click', (e) => { const b = e.target.closest('[data-wallet]'); if (!b) return; wallet = b.dataset.wallet; load(false); });
             $('vx-body').addEventListener('click', (e) => {
                 if (e.target.closest('a')) return;
                 const row = e.target.closest('tr.vx-main');

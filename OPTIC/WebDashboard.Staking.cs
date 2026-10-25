@@ -123,6 +123,7 @@ public static partial class WebDashboard
         MapOsmosisWallet(app);
         MapTitn(app);
         MapTitnLots(app);
+        MapBsc(app);
         app.MapGet("/api/staking/positions", async (HttpContext ctx) =>
         {
             var address = AddressParam(ctx);

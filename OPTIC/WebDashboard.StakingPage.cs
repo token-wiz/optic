@@ -1,4 +1,4 @@
-// My Staking page: validators an address is staked to and its locked OPT. Uses the primary wallet by default.
+// My Staking page: validators your wallets are staked to and their locked OPT. All saved Optio wallets by default.
 public static partial class WebDashboard
 {
     static void AppendMyStakingCard(System.Text.StringBuilder sb)
@@ -51,11 +51,10 @@ public static partial class WebDashboard
         <div class="card ms">
             <div class="card-content">
                 <form id="ms-form" class="ms-row">
-                    <div class="form-group" style="flex: 1 1 380px;"><label for="ms-address">Wallet</label><input type="text" id="ms-address" placeholder="optio1..." autocomplete="off" spellcheck="false"></div>
+                    <div class="form-group" style="flex: 1 1 380px;"><label for="ms-address">Wallet (leave blank for all your wallets)</label><input type="text" id="ms-address" placeholder="All my Optio wallets, or paste an optio1... address" autocomplete="off" spellcheck="false"></div>
                     <button type="submit" id="ms-load">Show staking</button>
                 </form>
-                <div id="ms-wallets" class="ms-row" style="gap: 6px;"></div>
-                <div id="ms-status" class="ms-note">Shows the validators this wallet is staked to and its locked OPT.</div>
+                <div id="ms-status" class="ms-note">Shows the validators your wallets are staked to and their locked OPT.</div>
                 <div id="ms-tiles" class="ms-tiles" hidden></div>
 
                 <div id="ms-validators-box" hidden>
@@ -86,85 +85,104 @@ public static partial class WebDashboard
             const short = (a) => a && a.length > 24 ? a.slice(0, 14) + '…' + a.slice(-6) : (a || '');
             const input = $('ms-address');
             const params = new URLSearchParams(location.search);
-            // Primary wallet by default; other saved wallets are one click away.
-            input.value = params.get('address') || window.opticWallets?.primary() || '';
-            const wallets = window.opticWallets?.list() || [];
-            const renderWallets = () => {
-                $('ms-wallets').innerHTML = wallets.length > 1 ? wallets.map(w => `<button type="button" class="ms-wallet" data-a="${esc(w.a)}" aria-pressed="${w.a === input.value.trim()}">${esc(w.l || short(w.a))}${w.p ? ' (primary)' : ''}</button>`).join('') : '';
-            };
-            $('ms-wallets').addEventListener('click', (e) => { const b = e.target.closest('[data-a]'); if (!b) return; input.value = b.dataset.a; load(); });
+            // Blank = every saved Optio wallet; an address in the box (or the link) shows just that one.
+            input.value = params.get('address') || '';
+            const label = (a) => window.opticWallets?.label(a) || short(a);
 
             const load = async () => {
-                const address = input.value.trim();
-                if (!/^optio1[02-9ac-hj-np-z]{38,58}$/.test(address)) { $('ms-status').textContent = 'Enter an optio1... wallet address (or save your primary on My Wallets).'; return; }
-                renderWallets();
+                const address = input.value.trim().toLowerCase();
+                if (address && !/^optio1[02-9ac-hj-np-z]{38,58}$/.test(address)) { $('ms-status').textContent = 'Enter an optio1... wallet address, or leave it blank for all your wallets.'; return; }
+                const addrs = address ? [address] : (window.opticWallets?.list() || []).map(w => w.a);
+                if (!addrs.length) { $('ms-status').innerHTML = 'Save your Optio wallets on <a href="/page/my-wallets">My Wallets</a>, or enter an address.'; return; }
+                const many = addrs.length > 1;
                 $('ms-load').disabled = true;
-                $('ms-status').textContent = 'Reading delegations, locks and lock history from the chain…';
+                $('ms-status').textContent = `Reading delegations, locks and lock history from the chain${many ? ' for your ' + addrs.length + ' wallets' : ''}…`;
                 try {
-                    const r = await fetch('/api/staking/positions?address=' + encodeURIComponent(address));
-                    const d = await r.json();
-                    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-                    const t = d.totals;
-                    $('ms-status').textContent = `${d.validators.length} validator(s) · as of ${String(d.asOfUtc).replace('T', ' ').slice(0, 16)} UTC`;
+                    const list = await Promise.all(addrs.map(async a => {
+                        const r = await fetch('/api/staking/positions?address=' + encodeURIComponent(a));
+                        const d = await r.json();
+                        if (!r.ok) throw new Error((many ? label(a) + ': ' : '') + (d.error || ('HTTP ' + r.status)));
+                        return { a, name: label(a), d };
+                    }));
+                    const add = (k) => list.reduce((s, w) => s + (Number(w.d.totals[k]) || 0), 0);
+                    const t = { balanceOpt: add('balanceOpt'), stakedOpt: add('stakedOpt'), unbondingOpt: add('unbondingOpt'), lockedOpt: add('lockedOpt'), freeToUndelegateOpt: add('freeToUndelegateOpt'), rewardsOpt: add('rewardsOpt'),
+                        unbondingEntries: list.flatMap(w => w.d.totals.unbondingEntries || []) };
+                    // One row per wallet and validator; keys are wallet|operator so each wallet keeps its own allowance.
+                    const rows = list.flatMap(w => w.d.validators.map(v => ({ ...v, wallet: w.a, key: w.a + '|' + v.operatorAddress })));
+                    const locks = list.flatMap(w => w.d.locks.map(l => ({ ...l, wallet: w.a }))).sort((x, y) => String(x.unlockDate).localeCompare(String(y.unlockDate)));
+                    const sub = (a) => many ? `<span class="ms-sub">${esc(label(a))}</span>` : '';
+                    const asOf = list.map(w => w.d.asOfUtc).sort()[0];
+                    $('ms-status').textContent = `${rows.length} validator position(s)${many ? ' across ' + list.map(w => w.name).join(', ') : ''} · as of ${String(asOf).replace('T', ' ').slice(0, 16)} UTC`;
                     const tile = (k, v, s) => `<div class="ms-tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s || ''}</div></div>`;
                     $('ms-tiles').hidden = false;
                     $('ms-tiles').innerHTML =
-                        tile('Total OPT', fmtOpt((t.balanceOpt || 0) + t.stakedOpt + (t.unbondingOpt || 0)) + ' OPT', `Balance ${fmtOpt(t.balanceOpt || 0)} + staked ${fmtOpt(t.stakedOpt)} + unbonding ${fmtOpt(t.unbondingOpt || 0)}`) +
-                    tile('Staked', fmtOpt(t.stakedOpt) + ' OPT', `${d.validators.filter(v => v.stakedOpt > 0).length} validator(s)`) +
-                        tile('Locked', fmtOpt(t.lockedOpt) + ' OPT', `${d.locks.length} lock(s)`) +
-                        tile('Can unstake (not locked)', fmtOpt(t.freeToUndelegateOpt) + ' OPT', 'in total, shared by all nodes (staked minus locked)') +
-                    (t.unbondingOpt ? tile('Already unbonding', fmtOpt(t.unbondingOpt) + ' OPT', (t.unbondingEntries || []).length ? 'free on ' + [...new Set(t.unbondingEntries.map(x => String(x.completes).slice(0, 10)))].join(', ') : '') : '') +
+                        tile('Total OPT', fmtOpt(t.balanceOpt + t.stakedOpt + t.unbondingOpt) + ' OPT', `Balance ${fmtOpt(t.balanceOpt)} + staked ${fmtOpt(t.stakedOpt)} + unbonding ${fmtOpt(t.unbondingOpt)}`) +
+                        tile('Staked', fmtOpt(t.stakedOpt) + ' OPT', `${new Set(rows.filter(v => v.stakedOpt > 0).map(v => v.operatorAddress)).size} validator(s)`) +
+                        tile('Locked', fmtOpt(t.lockedOpt) + ' OPT', `${locks.length} lock(s)`) +
+                        tile('Can unstake (not locked)', fmtOpt(t.freeToUndelegateOpt) + ' OPT', many ? 'in total; each wallet has its own allowance (its staked minus its locked)' : 'in total, shared by all nodes (staked minus locked)') +
+                        (t.unbondingOpt ? tile('Already unbonding', fmtOpt(t.unbondingOpt) + ' OPT', t.unbondingEntries.length ? 'free on ' + [...new Set(t.unbondingEntries.map(x => String(x.completes).slice(0, 10)))].join(', ') : '') : '') +
                         tile('Pending rewards', fmtOpt(t.rewardsOpt) + ' OPT', 'claimed when you unstake');
                     const statusBadge = (v) => v.jailed ? '<span class="ms-badge bad">Jailed</span>' : v.status === 'bonded' ? '<span class="ms-badge ok">Active</span>' : `<span class="ms-badge muted">${esc(v.status || 'unknown')}</span>`;
                     $('ms-validators-box').hidden = false;
-                    state = { d, plan: new Map() };
-                    $('ms-validators').innerHTML = d.validators.map(v => `<tr data-op="${esc(v.operatorAddress)}">
-                        <td data-label="Validator" class="ms-wide"><strong>${esc(v.moniker)}</strong><span class="ms-sub address-cell" title="${esc(v.operatorAddress)}">${esc(short(v.operatorAddress))}${v.commission ? ' · commission ' + fmtPct(Number(v.commission)) : ''}</span></td>
+                    state = { list, rows, plan: new Map() };
+                    $('ms-validators').innerHTML = rows.map(v => `<tr data-op="${esc(v.key)}">
+                        <td data-label="Validator" class="ms-wide"><strong>${esc(v.moniker)}</strong>${sub(v.wallet)}<span class="ms-sub address-cell" title="${esc(v.operatorAddress)}">${esc(short(v.operatorAddress))}${v.commission ? ' · commission ' + fmtPct(Number(v.commission)) : ''}</span></td>
                         <td data-label="Status">${statusBadge(v)}</td>
-                        <td data-label="Staked (OPT)" class="num">${fmtOpt(v.stakedOpt)}<span class="ms-sub">${fmtPct(v.shareOfStake)} of your stake</span></td>
+                        <td data-label="Staked (OPT)" class="num">${fmtOpt(v.stakedOpt)}<span class="ms-sub">${fmtPct(v.shareOfStake)} of ${many ? 'this wallet’s' : 'your'} stake</span></td>
                         <td data-label="Can unstake, up to (shared)" class="num ms-free" data-free></td>
                         <td data-label="Plan to unstake" class="num">${v.stakedOpt > 0 ? `<input type="number" class="ms-amt" min="0" step="any" placeholder="0" inputmode="decimal" aria-label="OPT to unstake from ${esc(v.moniker)}"><button type="button" class="lr-small ms-max">Max</button><span class="ms-warn" data-warn></span>` : '–'}</td>
                         <td data-label="Stays staked" class="num" data-stays></td>
                         <td data-label="Locked with it when created" class="num">${v.lockedWithThisValidatorOpt > 0 ? fmtOpt(v.lockedWithThisValidatorOpt) + v.lockedWithThisValidator.map(x => `<span class="ms-sub">${fmtOpt(x.opt)} until ${esc(x.unlockDate)}</span>`).join('') : '–'}</td>
                         <td data-label="Pending rewards" class="num">${fmtOpt(v.rewardsOpt)}</td>
                         <td data-label="Unbonding" class="num">${v.unbondingOpt > 0 ? fmtOpt(v.unbondingOpt) + (v.unbondingCompletes ? `<span class="ms-sub">done ${esc(String(v.unbondingCompletes).slice(0, 10))}</span>` : '') : '–'}</td>
-                    </tr>`).join('') || '<tr><td colspan="9" style="text-align: center; color: var(--text-secondary);">This wallet is not staked to any validator.</td></tr>';
-                    recompute();                    $('ms-locks-box').hidden = false;
-                    $('ms-locks').innerHTML = d.locks.map(l => `<tr>
-                        <td data-label="Unlocks">${esc(l.unlockDate)}</td>
+                    </tr>`).join('') || `<tr><td colspan="9" style="text-align: center; color: var(--text-secondary);">${many ? 'None of your wallets is' : 'This wallet is not'} staked to any validator.</td></tr>`;
+                    recompute();
+                    $('ms-locks-box').hidden = false;
+                    $('ms-locks').innerHTML = locks.map(l => `<tr>
+                        <td data-label="Unlocks">${esc(l.unlockDate)}${sub(l.wallet)}</td>
                         <td data-label="Locked (OPT)" class="num">${fmtOpt(l.opt)}</td>
                         <td data-label="Delegated to when locked" class="ms-wide">${l.parts.map(p => p.validator ? `${fmtOpt(p.opt)} OPT · <strong>${esc(p.moniker)}</strong>` : `${fmtOpt(p.opt)} OPT · <span style="color: var(--text-secondary);">locked without naming a validator</span>`).join('<br>')}</td>
                     </tr>`).join('') || '<tr><td colspan="3" style="text-align: center; color: var(--text-secondary);">No active locks.</td></tr>';
-                    $('ms-notes').innerHTML = d.notes.length ? `<ul>${d.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : '';
-                    history.replaceState(null, '', '?address=' + encodeURIComponent(address));
+                    const notes = [...new Set(list.flatMap(w => w.d.notes || []))];
+                    $('ms-notes').innerHTML = notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : '';
+                    history.replaceState(null, '', address ? '?address=' + encodeURIComponent(address) : location.pathname);
                 } catch (e) {
                     $('ms-status').innerHTML = `<span style="color: var(--error);">${esc(e.message)}</span>`;
                 } finally {
                     $('ms-load').disabled = false;
                 }
             };
-            // Unstaking planner. The chain rejects any undelegation that would leave total staked below total locked,
-            // so the unlocked OPT is one allowance shared by every node.
+            // Unstaking planner. The chain rejects any undelegation that would leave a wallet's total staked below its total
+            // locked, so each wallet's unlocked OPT is one allowance shared by every node that wallet is staked to.
             let state = null;
             const recompute = () => {
                 if (!state) return;
-                const free = Number(state.d.totals.freeToUndelegateOpt) || 0;
-                const planned = [...state.plan.values()].reduce((a, x) => a + x, 0);
-                const left = free - planned;
-                for (const v of state.d.validators) {
-                    const row = document.querySelector(`#ms-validators tr[data-op="${CSS.escape(v.operatorAddress)}"]`);
-                    if (!row) continue;
-                    const own = state.plan.get(v.operatorAddress) || 0;
-                    const maxHere = Math.max(0, Math.min(v.stakedOpt, free - (planned - own)));
-                    row.querySelector('[data-free]').textContent = fmtOpt(maxHere);
-                    row.querySelector('[data-stays]').textContent = fmtOpt(Math.max(0, v.stakedOpt - own));
-                    const warn = row.querySelector('[data-warn]');
-                    if (warn) warn.textContent = own > v.stakedOpt + 1e-6 ? 'More than staked on this node' : own > maxHere + 1e-6 ? 'Over your unlocked allowance' : '';
-                    row.dataset.max = String(maxHere);
+                const many = state.list.length > 1;
+                const lines = [];
+                let over = false;
+                for (const w of state.list) {
+                    const free = Number(w.d.totals.freeToUndelegateOpt) || 0;
+                    const mineRows = state.rows.filter(v => v.wallet === w.a);
+                    const planned = mineRows.reduce((s, v) => s + (state.plan.get(v.key) || 0), 0);
+                    const left = free - planned;
+                    for (const v of mineRows) {
+                        const row = document.querySelector(`#ms-validators tr[data-op="${CSS.escape(v.key)}"]`);
+                        if (!row) continue;
+                        const own = state.plan.get(v.key) || 0;
+                        const maxHere = Math.max(0, Math.min(v.stakedOpt, free - (planned - own)));
+                        row.querySelector('[data-free]').textContent = fmtOpt(maxHere);
+                        row.querySelector('[data-stays]').textContent = fmtOpt(Math.max(0, v.stakedOpt - own));
+                        const warn = row.querySelector('[data-warn]');
+                        if (warn) warn.textContent = own > v.stakedOpt + 1e-6 ? 'More than staked on this node' : own > maxHere + 1e-6 ? 'Over this wallet’s unlocked allowance' : '';
+                        row.dataset.max = String(maxHere);
+                    }
+                    if (left < -1e-6) over = true;
+                    if (many && !mineRows.length) continue;
+                    lines.push(`<span>${many ? `<strong>${esc(w.name)}</strong>: ` : ''}Unlocked allowance <strong>${fmtOpt(free)} OPT</strong></span><span>Planned <strong>${fmtOpt(planned)} OPT</strong></span><span>${left < -1e-6 ? `<strong style="color: var(--error);">Over by ${fmtOpt(-left)} OPT</strong>` : `Left <strong>${fmtOpt(left)} OPT</strong>`}</span>`);
                 }
                 const box = $('ms-plan');
-                box.classList.toggle('over', left < -1e-6);
-                box.innerHTML = `<span>Unlocked allowance <strong>${fmtOpt(free)} OPT</strong></span><span>Planned <strong>${fmtOpt(planned)} OPT</strong></span><span>${left < -1e-6 ? `<strong style="color: var(--error);">Over by ${fmtOpt(-left)} OPT</strong>` : `Left <strong>${fmtOpt(left)} OPT</strong>`}</span>${planned > 0 ? '<button type="button" class="lr-small" id="ms-plan-clear">Clear plan</button>' : ''}`;
+                box.classList.toggle('over', over);
+                box.innerHTML = lines.map(l => `<div style="display: flex; gap: inherit; flex-wrap: wrap; width: 100%;">${l}</div>`).join('') + (state.plan.size ? '<button type="button" class="lr-small" id="ms-plan-clear">Clear plan</button>' : '');
                 $('ms-plan-clear')?.addEventListener('click', () => { state.plan.clear(); document.querySelectorAll('#ms-validators input.ms-amt').forEach(i => i.value = ''); recompute(); });
             };
             $('ms-validators').addEventListener('input', (e) => {
@@ -183,8 +201,7 @@ public static partial class WebDashboard
             });
 
             $('ms-form').addEventListener('submit', (e) => { e.preventDefault(); load(); });
-            renderWallets();
-            if (input.value) load();
+            load();
         })();
         </script>
         """;

@@ -12,7 +12,7 @@ public static partial class WebDashboard
         new("My OPT", new NavPage[]
         {
             new("my-wallets", "My Wallets", "Your saved wallets and exchanges"),
-            new("address-distributions", "My Distributions", "Node and staking payouts to one wallet"),
+            new("address-distributions", "My Distributions", "Node and staking payouts to your wallets"),
             new("pnl", "Profit & Loss", "What your OPT cost and what it is worth"),
             new("sell-planner", "Sell Planner", "How much to sell for a target loss this year"),
             new("fifo-sales", "Sales & Lots", "Every sale and the lots it used: FIFO or identified"),
