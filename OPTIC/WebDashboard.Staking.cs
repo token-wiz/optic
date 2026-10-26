@@ -131,6 +131,7 @@ public static partial class WebDashboard
         MapSellPlanTracking(app);
         MapTitnWatch(app);
         MapTitnGrowth(app);
+        MapTitnNextPayout(app);
         MapWebPush(app);
         app.MapGet("/api/staking/positions", async (HttpContext ctx) =>
         {

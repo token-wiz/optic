@@ -40,6 +40,11 @@ public static partial class WebDashboard
                 <h3>Your path to 1,000,000 TITN</h3>
                 <div class="tc-grid" id="tg-goal"></div>
 
+                <h3>Next payout</h3>
+                <p class="tc-note">Swap fees collect in THORWallet's fee splitter (<span id="tn-splitter"></span>) until <code>distribute()</code> is called; then <span id="tn-pct">50%</span> goes to the staking contract at once and is ready to harvest straight away. So the USDC waiting in the splitter is your next payout before it happens: your cut is the stakers' share times your share of all staked TITN. Fees still with the swap services, not yet sent to the splitter, can't be seen. Checked every minute while this page is open.</p>
+                <div class="tc-grid" id="tn-tiles"></div>
+                <details style="margin: 8px 0 18px;"><summary>Recent payouts</summary><div id="tn-list"></div></details>
+
                 <h3>Growth and revenue</h3>
                 <p class="tc-note">Read from the chain. <strong>Fees</strong> are the USDC paid into THORWallet's fee splitter (<span id="tg-splitter"></span>), which the contract shares out as it arrives: <strong id="tg-share">50%</strong> to TITN stakers, 45% to a THORWallet operating wallet (it pays invoices from it) and 5% to the raffle. The THORWallet app describes staking as <strong>“~70% of Fees”</strong>; a THORWallet founder confirmed (October 2026) that 70% was the original target, not the configured split, and that raising the share depends on THORWallet first returning to at least break-even (it is operating at a loss in 2026 and drawing on its treasury). Buybacks from future perps and card income are planned but at THORWallet's discretion. So rising fees here are also the path to a bigger staker share. Fees follow how much people swap through THORWallet, so a rising line means more use. <strong>Holders</strong> are wallets with at least 1 TITN on Base, counting staked TITN as its owner's.</p>
                 <div class="tc-grid" id="tg-tiles"></div>
@@ -553,6 +558,26 @@ public static partial class WebDashboard
                         data = j.data; alerts = j.alerts; prices = j.prices || []; $('tc-status').textContent = ''; render();
                     }).catch(e => { if (!data) $('tc-status').textContent = 'Could not read the TITN treasury: ' + e.message; });
                 };
+                // ---- Next payout: the fee splitter's waiting USDC and your cut ----
+                const ago = (t) => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 60 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; };
+                const cents = (v) => '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: v < 1 ? 4 : 2 });
+                const renderNext = (j) => {
+                    $('tn-splitter').innerHTML = addr(j.splitter, 'splitter');
+                    $('tn-pct').textContent = j.stakersPct + '%';
+                    const last = (j.payouts || [])[0];
+                    $('tn-tiles').innerHTML = [
+                        ['Waiting in the splitter', usd(j.waiting), `${usd(j.toStakers)} of it goes to stakers`],
+                        ['Your cut of it', cents(j.myCut), j.myStaked ? `${n0(j.myStaked)} TITN staked = ${(j.share * 100).toFixed(3)}% of ${mil(j.totalStaked)}` : 'No TITN staked in your wallets'],
+                        ['Ready to harvest now', cents(j.harvest), 'already in the staking contract'],
+                        ['Last payout', last ? ago(last.time) : '—', last ? `${usd(last.stakers)} to stakers · your cut ${cents(last.stakers * j.share)}` : ''],
+                        ['Payouts come about every', j.medianGapHours ? (j.medianGapHours < 1 ? Math.round(j.medianGapHours * 60) + ' min' : j.medianGapHours + ' h') : '—', 'typical gap between recent payouts'],
+                    ].map(([k, v, s2]) => `<div class="tc-tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s2}</div></div>`).join('');
+                    $('tn-list').innerHTML = (j.payouts || []).length ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>When</th><th style="text-align: right;">Paid out</th><th style="text-align: right;">To stakers</th><th style="text-align: right;">Your cut (at today's stake)</th></tr></thead><tbody>${j.payouts.slice(0, 20).map(p => `<tr><td>${txl(p.tx, esc(when(p.time)))}</td><td style="text-align: right;">${usd(p.total)}</td><td style="text-align: right;">${usd(p.stakers)}</td><td style="text-align: right;">${cents(p.mine)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="tc-note">No payouts found.</p>';
+                };
+                const loadNext = () => fetch('/api/titn/next-payout').then(r => r.json()).then(j => { if (j && !j.error) renderNext(j); else $('tn-tiles').innerHTML = `<p class="tc-note">${esc(j && j.error || 'Could not read the fee splitter.')}</p>`; }).catch(() => { });
+                loadNext();
+                setInterval(() => { if (!document.hidden) loadNext(); }, 60000);
+
                 window.addEventListener('optic-fresh', () => { load(false); loadGrowth(); });
                 loadGrowth();
                 load(false);
