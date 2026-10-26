@@ -277,9 +277,11 @@ public static partial class WebDashboard
     }
 
     // The signed-in user's saved osmo1... accounts with their labels.
-    static List<(string Address, string Label)> UserOsmoWallets(HttpContext ctx)
+    static List<(string Address, string Label)> UserOsmoWallets(HttpContext ctx) => UserOsmoWalletsIn(DashboardAuth.UserDataDir(ctx));
+
+    static List<(string Address, string Label)> UserOsmoWalletsIn(string userDir)
     {
-        var path = Path.Combine(DashboardAuth.UserDataDir(ctx), "wallets.json");
+        var path = Path.Combine(userDir, "wallets.json");
         if (!File.Exists(path)) return new();
         var arr = JsonNode.Parse(File.ReadAllText(path)) as JsonArray ?? new JsonArray();
         return arr.Select(w => (Address: (w?["a"]?.ToString() ?? "").ToLowerInvariant(), Label: w?["l"]?.ToString() ?? ""))

@@ -376,7 +376,7 @@ public static class DashboardAuth
                 else { ctx.Response.ContentType = "text/html; charset=utf-8"; await ctx.Response.WriteAsync(LoginPage("/", "This address is blocked after too many failed sign-ins. Ask an admin to unblock it.")); }
                 return;
             }
-            if (path == "/login" || path == "/logout" || path.StartsWith("/images/"))
+            if (path == "/login" || path == "/logout" || path.StartsWith("/images/") || path == "/sw.js" || path == "/manifest.webmanifest" || path.StartsWith("/apple-touch-icon"))
             {
                 await next();
                 return;
@@ -462,6 +462,7 @@ public static class DashboardAuth
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OPTIC Sign In</title>
 <link rel="icon" type="image/png" href="/images/optic-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="{{(global::WebDashboard.AppleTouchIconHref)}}">
 <style>
   :root { --bg: #f4f6f9; --surface: #ffffff; --text: #1b1f24; --muted: #5b6573; --border: #d5dbe3; --accent: #2f6fde; --error: #c4314b; }
   @media (prefers-color-scheme: dark) { :root { --bg: #12151a; --surface: #1c2027; --text: #e8ebef; --muted: #9aa4b2; --border: #343b46; --accent: #5b93f5; --error: #ff6b81; } }

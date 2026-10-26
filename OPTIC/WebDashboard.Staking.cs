@@ -128,6 +128,10 @@ public static partial class WebDashboard
         MapPortfolioHistory(app);
         MapSovr(app);
         MapOsmosisSell(app);
+        MapSellPlanTracking(app);
+        MapTitnWatch(app);
+        MapTitnGrowth(app);
+        MapWebPush(app);
         app.MapGet("/api/staking/positions", async (HttpContext ctx) =>
         {
             var address = AddressParam(ctx);

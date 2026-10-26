@@ -14,6 +14,7 @@ public static partial class WebDashboard
         {
             new("optio", "Optio", "The Optio layer-one blockchain: supply, staking, payouts and nodes"),
             new("sovr", "SOVR", "The Sovren layer-one blockchain: supply, staking, validators and governance"),
+            new("titn", "TITN", "THORWallet's token: supply, the treasury, vesting unlocks and their effect on the price"),
         }),
         new("My OPT", new NavPage[]
         {

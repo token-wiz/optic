@@ -85,6 +85,10 @@ public static partial class WebDashboard
             return Results.File(safePath, "text/csv", filename);
         });
 
+        // iOS also asks for the Home Screen icon at the site root (an opaque square; iOS fills transparency with black).
+        foreach (var root in new[] { "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png" })
+            app.MapGet(root, () => Results.File(Path.Combine(workingDir, "images", "apple-touch-icon.png"), "image/png"));
+
         app.MapGet("/images/{filename}", (string filename) =>
         {
             var imagesDir = Path.Combine(workingDir, "images");
@@ -2304,6 +2308,7 @@ public static partial class WebDashboard
             "my-wallets" => "My Wallets",
             "needs-input" => "Needs Your Input",
             "sovr" => "SOVR",
+            "titn" => "TITN",
             "osmosis-sell" => "Sell OPT on Osmosis",
             "opt-sell-plan" => "OPT Sell Plan",
             "my-titn" => "My TITN",
@@ -2360,6 +2365,12 @@ public static partial class WebDashboard
         return sb.ToString();
     }
 
+    // The Home Screen icon inline: iOS fetches a linked icon outside the browser's certificate exception, so with the
+    // self-signed certificate the fetch fails and iOS draws a letter instead.
+    internal static readonly string AppleTouchIconHref = File.Exists(Path.Combine(Environment.CurrentDirectory, "images", "apple-touch-icon.png"))
+        ? "data:image/png;base64," + Convert.ToBase64String(File.ReadAllBytes(Path.Combine(Environment.CurrentDirectory, "images", "apple-touch-icon.png")))
+        : "/images/apple-touch-icon.png";
+
     static void GetCSSAndHeader(System.Text.StringBuilder sb, string url, string page, Func<string, string> activeLink)
     {
         sb.Append(@"<!DOCTYPE html>
@@ -2369,6 +2380,10 @@ public static partial class WebDashboard
     <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
     <title>OPTIC Dashboard</title>
     <link rel=""icon"" type=""image/png"" href=""/images/optic-icon.png"">
+    <link rel=""manifest"" href=""/manifest.webmanifest"">
+    <link rel=""apple-touch-icon"" sizes=""180x180"" href=""" + AppleTouchIconHref + @""">
+    <meta name=""apple-mobile-web-app-capable"" content=""yes"">
+    <meta name=""theme-color"" content=""#0078d4"">
     <style>
         :root {
             color-scheme: light;
@@ -3460,7 +3475,7 @@ public static partial class WebDashboard
                 <a href=""/"" class=""brand-link"" aria-label=""OPTIC Dashboard"">
                     <img src=""/images/optic-logo-color.png"" alt=""OPTIC Logo"" />
                 </a>
-" + BellHtml + NavToggleHtml + @"
+" + BellHtml + PullRefreshHtml + PushPromptHtml + NavToggleHtml + @"
                 <ul class=""top-menu"" id=""top-menu"">" + NavMenuHtml(page) + @"
                 </ul>
                 <div class=""header-links"">
@@ -3647,6 +3662,9 @@ public static partial class WebDashboard
                 break;
             case "sovr":
                 AppendSovrPage(sb);
+                break;
+            case "titn":
+                AppendTitnChainPage(sb);
                 break;
             case "osmosis-sell":
                 AppendOsmosisSellPage(sb);
@@ -4419,6 +4437,7 @@ public static partial class WebDashboard
                                 </div>
                                 <div id=""st-pref-status"" class=""st-note"" style=""margin-top: 6px;""></div>
                             </div>
+" + SettingsNotificationsHtml + @"
                             <div class=""st-section"">
                                 <h3>My saved data</h3>
                                 <div class=""data-table-wrap pnl-table-wrap"">
@@ -4513,7 +4532,8 @@ public static partial class WebDashboard
                     <div class=""ad-tabs"" role=""tablist"" aria-label=""Admin sections"">
                         <button type=""button"" role=""tab"" data-ad-tab=""general"" aria-selected=""true"">Users &amp; server</button>
                         <button type=""button"" role=""tab"" data-ad-tab=""chains"" aria-selected=""false"">Chains</button>
-                    </div>
+                        <button type=""button"" role=""tab"" data-ad-tab=""push"" aria-selected=""false"">Notifications</button>
+                    </div>" + AdminPushHtml + @"
                     <div class=""card"" id=""ad-chains"" style=""grid-column: 1 / -1;"" hidden>
                         <h2>Supported chains</h2>
                         <div class=""card-content"">
@@ -4576,12 +4596,14 @@ public static partial class WebDashboard
                             // Tabs: the Chains card, or every other card on this page.
                             const show = (tab) => {
                                 document.querySelectorAll('[data-ad-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.adTab === tab)));
-                                document.querySelectorAll('.card').forEach(c => { c.hidden = (c.id === 'ad-chains') !== (tab === 'chains'); });
+                                const own = { chains: 'ad-chains', push: 'ad-push' };
+                                document.querySelectorAll('.card').forEach(c => { c.hidden = Object.values(own).includes(c.id) ? c.id !== own[tab] : tab !== 'general'; });
                                 if (tab === 'chains' && !loaded) load();
-                                history.replaceState(null, '', tab === 'chains' ? '#chains' : location.pathname + location.search);
+                                if (tab === 'push' && window.adPushLoad) window.adPushLoad();
+                                history.replaceState(null, '', tab !== 'general' ? '#' + tab : location.pathname + location.search);
                             };
                             document.querySelectorAll('[data-ad-tab]').forEach(b => b.addEventListener('click', () => show(b.dataset.adTab)));
-                            const start = () => show(location.hash === '#chains' ? 'chains' : 'general');
+                            const start = () => show(location.hash === '#chains' ? 'chains' : location.hash === '#push' ? 'push' : 'general');
                             if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else setTimeout(start, 0);
                         })();
                     </script>
